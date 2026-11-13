@@ -103,6 +103,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     errRoomNotFound: 'Room not found. Check the code and try again.',
     errRoomFull: 'That room already has 10 players.',
     errGameInProgress: 'Game already in progress in that room.',
+    errConnectionFailed: 'Could not connect to the room server. Please try again.',
     errDisconnected: 'Disconnected from room.',
     // Transport info
     modeLocalWs: 'Live Room Server',
@@ -210,6 +211,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     errRoomNotFound: 'रूम नहीं मिला। कोड जाँचकर दोबारा कोशिश करें।',
     errRoomFull: 'इस रूम में पहले से 10 खिलाड़ी हैं।',
     errGameInProgress: 'इस रूम में गेम पहले से चल रहा है।',
+    errConnectionFailed: 'रूम सर्वर से कनेक्शन नहीं हो पाया। कृपया फिर से कोशिश करें।',
     errDisconnected: 'रूम से कनेक्शन टूट गया।',
     // Transport info
     modeLocalWs: 'लाइव रूम सर्वर',

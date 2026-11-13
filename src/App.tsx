@@ -136,10 +136,12 @@ export default function App() {
           return t(lang, 'errRoomFull');
         case 'GAME_IN_PROGRESS':
           return t(lang, 'errGameInProgress');
+        case 'CONNECTION_FAILED':
+          return t(lang, 'errConnectionFailed');
         case 'DISCONNECTED':
           return t(lang, 'errDisconnected');
         default:
-          return t(lang, 'errDisconnected');
+          return t(lang, 'errConnectionFailed');
       }
     },
     [lang]
@@ -170,37 +172,52 @@ export default function App() {
 
     try {
       await requestMicrophone();
-      const code = generateRoomCode();
       const me = buildLocalPlayer(true);
-      const initialRoom: RoomState = {
-        code,
-        hostId: myId,
-        phase: 'lobby',
-        createdAt: Date.now(),
-        settings: {
-          category: 'random',
-          rounds: 3,
-          imposterCount: 1,
-        },
-        players: { [myId]: me },
-        usedPairIds: [],
-        roundConfig: null,
-        clues: [],
-        votes: {},
-        outcome: null,
-      };
 
-      await roomTransport.createRoom(initialRoom, me, {
-        onRoomUpdate: (nextRoom) => {
-          setRoom(nextRoom);
-        },
-        onSignal: handleSignal,
-        onError: (codeErr) => {
-          setErrorMsg(mapTransportError(codeErr));
-        },
-      });
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const code = generateRoomCode();
+        const initialRoom: RoomState = {
+          code,
+          hostId: myId,
+          phase: 'lobby',
+          createdAt: Date.now(),
+          settings: {
+            category: 'random',
+            rounds: 3,
+            imposterCount: 1,
+          },
+          players: { [myId]: me },
+          usedPairIds: [],
+          roundConfig: null,
+          clues: [],
+          votes: {},
+          outcome: null,
+        };
+
+        try {
+          await roomTransport.createRoom(initialRoom, me, {
+            onRoomUpdate: (nextRoom) => {
+              setRoom(nextRoom);
+            },
+            onSignal: handleSignal,
+            onError: (codeErr) => {
+              setErrorMsg(mapTransportError(codeErr));
+            },
+          });
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!(err instanceof Error && err.message === 'ROOM_EXISTS')) {
+            throw err;
+          }
+        }
+      }
+
+      if (lastErr) throw lastErr;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'UNKNOWN';
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
       setErrorMsg(mapTransportError(msg));
     } finally {
       setLoadingAction(null);
