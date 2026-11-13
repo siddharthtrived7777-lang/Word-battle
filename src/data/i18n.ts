@@ -2,7 +2,7 @@ import { Language } from '../types/game';
 
 export const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en: {
-    appTitle: 'Imposter Word',
+    appTitle: 'Word Battle',
     tagline: 'One player has a slightly different word. Spot who it is.',
     yourName: 'Your Name',
     namePlaceholder: 'Enter display name',
@@ -115,7 +115,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     modeFirebaseRtdb: 'Firebase Firestore',
   },
   hi: {
-    appTitle: 'इम्पोस्टर वर्ड',
+    appTitle: 'वर्ड बैटल',
     tagline: 'एक खिलाड़ी के पास थोड़ा अलग शब्द है। पहचानो कौन है!',
     yourName: 'आपका नाम',
     namePlaceholder: 'अपना नाम लिखें',

@@ -43,8 +43,8 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
     if (navigator.share) {
       navigator
         .share({
-          title: 'Imposter Word',
-          text: `Join my Imposter Word room: ${room.code}`,
+          title: 'Word Battle',
+          text: `Join my Word Battle room: ${room.code}`,
           url,
         })
         .catch(() => {});

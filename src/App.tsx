@@ -594,6 +594,10 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      <footer className={`border-t border-slate-800/60 text-center text-xs text-slate-400 px-4 py-4 ${room ? 'pb-24' : ''}`}>
+        Developed by <span className="text-slate-200 font-semibold">Siddharth Trivedi</span>
+      </footer>
+
       {room && (
         <VoiceBar
           lang={lang}
