@@ -279,7 +279,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <span className="text-xs text-slate-400">
                 {firestoreEnabled ? t(lang, 'modeFirebaseRtdb') : t(lang, 'modeLocalWs')}
                 <span aria-hidden="true"> · </span>
-                3–10 {t(lang, 'playersCount').toLowerCase()}
+                2–10 {t(lang, 'playersCount').toLowerCase()}
               </span>
               <button
                 type="button"

@@ -28,7 +28,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 
   const players = getSortedPlayers(room.players);
   const isHost = room.hostId === myId;
-  const canStart = players.length >= 3 && players.length <= 10;
+  const canStart = players.length >= 2 && players.length <= 10;
   const canTwoImposters = players.length >= 5;
 
   const handleCopyCode = () => {
@@ -165,7 +165,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
             })}
           </div>
 
-          {players.length < 3 && (
+          {players.length < 2 && (
             <p className="mt-4 text-xs text-amber-300/90 font-medium">
               {t(lang, 'minPlayersNotice')}
             </p>

@@ -333,7 +333,7 @@ export default function App() {
   const handleStartGame = () => {
     if (!room || room.hostId !== myId) return;
     const playersList = getSortedPlayers(room.players);
-    if (playersList.length < 3) return;
+    if (playersList.length < 2) return;
 
     const resetPlayers: Record<string, Player> = {};
     for (const p of playersList) {
