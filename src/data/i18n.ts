@@ -105,9 +105,14 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     errGameInProgress: 'Game already in progress in that room.',
     errConnectionFailed: 'Could not connect to the room server. Please try again.',
     errDisconnected: 'Disconnected from room.',
+    signInWithGoogle: 'Sign in with Google',
+    signingIn: 'Signing in...',
+    signInRequired: 'Sign in with Google to create or join a live room.',
+    signOut: 'Sign Out',
+    signedInAs: 'Signed in',
     // Transport info
     modeLocalWs: 'Live Room Server',
-    modeFirebaseRtdb: 'Firebase RTDB',
+    modeFirebaseRtdb: 'Firebase Firestore',
   },
   hi: {
     appTitle: 'इम्पोस्टर वर्ड',
@@ -213,9 +218,14 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     errGameInProgress: 'इस रूम में गेम पहले से चल रहा है।',
     errConnectionFailed: 'रूम सर्वर से कनेक्शन नहीं हो पाया। कृपया फिर से कोशिश करें।',
     errDisconnected: 'रूम से कनेक्शन टूट गया।',
+    signInWithGoogle: 'Google से साइन इन करें',
+    signingIn: 'साइन इन हो रहा है...',
+    signInRequired: 'लाइव रूम बनाने या जॉइन करने के लिए Google से साइन इन करें।',
+    signOut: 'साइन आउट',
+    signedInAs: 'साइन इन',
     // Transport info
     modeLocalWs: 'लाइव रूम सर्वर',
-    modeFirebaseRtdb: 'Firebase RTDB',
+    modeFirebaseRtdb: 'Firebase Firestore',
   },
 };
 

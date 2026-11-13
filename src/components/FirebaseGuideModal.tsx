@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Copy, Check, Database } from 'lucide-react';
 import { RTDB_RULES_SNIPPET, isFirebaseConfigured } from '../firebaseConfig';
+import { isFirestoreConfigured } from '../firebase';
 
 interface FirebaseGuideModalProps {
   open: boolean;
@@ -12,7 +13,8 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({ open, on
 
   if (!open) return null;
 
-  const configured = isFirebaseConfigured();
+  const firestoreActive = isFirestoreConfigured();
+  const rtdbConfigured = isFirebaseConfigured();
 
   const handleCopyRules = () => {
     navigator.clipboard?.writeText(RTDB_RULES_SNIPPET).then(() => {
@@ -34,7 +36,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({ open, on
           <div className="flex items-center gap-2.5">
             <Database className="w-5 h-5 text-amber-400" />
             <h2 className="font-display text-lg font-bold text-white">
-              Firebase Realtime Database Setup
+              {firestoreActive ? 'Firebase Firestore Connected' : 'Firebase Realtime Database Setup'}
             </h2>
           </div>
           <button
@@ -48,9 +50,11 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({ open, on
         </div>
 
         <p className="text-sm text-slate-300 mb-4 leading-relaxed">
-          {configured
-            ? 'Firebase Realtime Database is configured and active for live room state and WebRTC signaling.'
-            : 'Placeholder config detected in src/firebaseConfig.ts — the app is currently using the built-in live WebSocket server so you can play right away. To switch to your own Firebase RTDB:'}
+          {firestoreActive
+            ? 'Cloud Firestore and Google Authentication are provisioned via firebase-applet-config.json for live room sync and WebRTC signaling.'
+            : rtdbConfigured
+              ? 'Firebase Realtime Database is configured and active for live room state and WebRTC signaling.'
+              : 'Placeholder config detected in src/firebaseConfig.ts — the app is currently using the built-in live server. To switch to your own Firebase RTDB:'}
         </p>
 
         <ol className="space-y-2.5 text-sm text-slate-300 list-decimal list-inside mb-5">

@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "Multiplayer Imposter Word game room state, settings, players map, clues, votes, and round outcome.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "5-character uppercase room code",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "hostId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the current room host",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "phase": {
+          "type": "string",
+          "description": "Current game state machine phase",
+          "enum": ["lobby", "reveal", "discussion", "voting", "result"]
+        },
+        "settings": {
+          "type": "object",
+          "description": "Host-configured category, round count, and imposter count"
+        },
+        "players": {
+          "type": "object",
+          "description": "Map of player UIDs to player state (max 10 players)"
+        },
+        "usedPairIds": {
+          "type": "array",
+          "description": "Word pair IDs already used in this session"
+        },
+        "roundConfig": {
+          "type": "object",
+          "description": "Active round word pair, roles, turn order, and timer"
+        },
+        "clues": {
+          "type": "array",
+          "description": "Optional typed clues submitted during discussion"
+        },
+        "votes": {
+          "type": "object",
+          "description": "Map of voter UID to suspected player UID"
+        },
+        "outcome": {
+          "type": "object",
+          "description": "Computed round winner, vote counts, and awarded points"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when room was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last room update"
+        }
+      },
+      "required": [
+        "code",
+        "hostId",
+        "phase",
+        "settings",
+        "players",
+        "usedPairIds",
+        "clues",
+        "votes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Signal": {
+      "title": "Signal",
+      "description": "WebRTC peer-to-peer voice signaling message (SDP offer/answer or ICE candidate).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["offer", "answer", "ice"]
+        },
+        "data": {
+          "type": "object"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "from", "to", "type", "data", "timestamp", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Active multiplayer game rooms keyed by 5-character room code."
+    },
+    "/rooms/{roomCode}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "Ephemeral WebRTC voice signaling payloads targeted to a specific player UID."
+    }
+  }
+}

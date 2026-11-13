@@ -9,7 +9,16 @@ import type { RoomState, Player, SignalPayload } from './src/types/game.ts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+function resolvePort(): number {
+  const idx = process.argv.indexOf('--port');
+  if (idx !== -1 && process.argv[idx + 1]) {
+    const parsed = Number(process.argv[idx + 1]);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return Number(process.env.PORT || 3000);
+}
+
+const PORT = resolvePort();
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Authoritative in-memory room state when running built-in room server

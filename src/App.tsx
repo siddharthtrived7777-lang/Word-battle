@@ -1,13 +1,18 @@
 /**
  * Imposter Word — Multiplayer Social Deduction Party Game
  *
- * Firebase Realtime Database config placeholder & setup instructions live at the
- * top of `src/firebaseConfig.ts` (imported below as `FIREBASE_CONFIG`).
- * While placeholder values are present, the app uses its built-in WebSocket
- * room server so multiplayer and WebRTC voice chat work out of the box.
+ * Uses provisioned Firebase Firestore + Google Authentication (configured via
+ * `firebase-applet-config.json` and initialized in `src/firebase.ts`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import {
+  auth,
+  isFirestoreConfigured,
+  signInWithGoogle,
+  signOutFirebase,
+} from './firebase';
 import { FIREBASE_CONFIG } from './firebaseConfig';
 import {
   ClueEntry,
@@ -39,7 +44,6 @@ import { DiscussionScreen } from './screens/DiscussionScreen';
 import { VotingScreen } from './screens/VotingScreen';
 import { ResultScreen } from './screens/ResultScreen';
 
-// Reference config so tree-shaking never strips FIREBASE_CONFIG metadata
 void FIREBASE_CONFIG;
 
 function loadStoredProfile() {
@@ -69,8 +73,12 @@ function loadStoredProfile() {
 
 export default function App() {
   const initial = useMemo(() => loadStoredProfile(), []);
+  const firestoreEnabled = useMemo(() => isFirestoreConfigured(), []);
 
-  const [myId] = useState<string>(initial.id);
+  const [authReady, setAuthReady] = useState<boolean>(!firestoreEnabled);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [signingIn, setSigningIn] = useState<boolean>(false);
+
   const [lang, setLang] = useState<Language>(initial.lang);
   const [playerName, setPlayerName] = useState<string>(initial.name);
   const [avatar, setAvatar] = useState<PlayerAvatar>(initial.avatar);
@@ -79,6 +87,8 @@ export default function App() {
   const [loadingAction, setLoadingAction] = useState<'create' | 'join' | null>(null);
   const [showFirebaseGuide, setShowFirebaseGuide] = useState(false);
   const [sfxEnabled, setSfxEnabled] = useState(true);
+
+  const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
 
   const initialJoinCode = useMemo(() => {
     try {
@@ -94,6 +104,22 @@ export default function App() {
 
   const lastTurnAdvanceKeyRef = useRef<string>('');
   const advancingResultRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!firestoreEnabled) return;
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+      if (user?.displayName) {
+        setPlayerName((prev) => (prev.trim() ? prev : user.displayName || ''));
+      }
+      if (!user) {
+        roomTransport.cleanup();
+        setRoom(null);
+      }
+    });
+    return () => unsub();
+  }, [firestoreEnabled]);
 
   // Persist user profile locally
   useEffect(() => {
@@ -115,6 +141,25 @@ export default function App() {
     handleSignal,
   } = useVoiceChat(myId, Boolean(room), room?.players);
 
+  const handleSignIn = async () => {
+    setErrorMsg(null);
+    setSigningIn(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sign-in failed';
+      setErrorMsg(msg);
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await roomTransport.leaveRoom();
+    setRoom(null);
+    await signOutFirebase();
+  };
+
   const handleToggleLang = () => {
     setLang((prev) => (prev === 'en' ? 'hi' : 'en'));
   };
@@ -129,6 +174,11 @@ export default function App() {
 
   const mapTransportError = useCallback(
     (code: string) => {
+      if (code.startsWith('CONNECTION_FAILED:')) {
+        const detail = code.slice('CONNECTION_FAILED:'.length);
+        console.error('Room connection error:', detail);
+        return `${t(lang, 'errConnectionFailed')} (${detail})`;
+      }
       switch (code) {
         case 'ROOM_NOT_FOUND':
           return t(lang, 'errRoomNotFound');
@@ -136,12 +186,15 @@ export default function App() {
           return t(lang, 'errRoomFull');
         case 'GAME_IN_PROGRESS':
           return t(lang, 'errGameInProgress');
+        case 'AUTH_REQUIRED':
+          return t(lang, 'signInRequired');
         case 'CONNECTION_FAILED':
           return t(lang, 'errConnectionFailed');
         case 'DISCONNECTED':
           return t(lang, 'errDisconnected');
         default:
-          return t(lang, 'errConnectionFailed');
+          console.error('Unexpected room error:', code);
+          return `${t(lang, 'errConnectionFailed')} (${code})`;
       }
     },
     [lang]
@@ -163,6 +216,10 @@ export default function App() {
   );
 
   const handleCreateRoom = async () => {
+    if (firestoreEnabled && !authUser) {
+      setErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
     if (!playerName.trim()) {
       setErrorMsg(t(lang, 'errEnterName'));
       return;
@@ -225,6 +282,10 @@ export default function App() {
   };
 
   const handleJoinRoom = async (rawCode: string) => {
+    if (firestoreEnabled && !authUser) {
+      setErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
     if (!playerName.trim()) {
       setErrorMsg(t(lang, 'errEnterName'));
       return;
@@ -251,7 +312,7 @@ export default function App() {
         },
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'UNKNOWN';
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
       setErrorMsg(mapTransportError(msg));
     } finally {
       setLoadingAction(null);
@@ -317,7 +378,6 @@ export default function App() {
     });
   }, [myId]);
 
-  // Host auto-advances from reveal -> discussion once all players are ready
   useEffect(() => {
     if (!room || room.phase !== 'reveal' || room.hostId !== myId) return;
     const players = getSortedPlayers(room.players);
@@ -412,7 +472,6 @@ export default function App() {
     });
   }, [myId]);
 
-  // Host auto-reveals voting results once all players have locked in
   useEffect(() => {
     if (!room || room.phase !== 'voting' || room.hostId !== myId) return;
     const players = getSortedPlayers(room.players);
@@ -479,6 +538,11 @@ export default function App() {
                 onOpenFirebaseGuide={() => setShowFirebaseGuide(true)}
                 errorMsg={errorMsg}
                 loadingAction={loadingAction}
+                authReady={authReady}
+                authUser={authUser}
+                onSignIn={handleSignIn}
+                onSignOut={handleSignOut}
+                signingIn={signingIn}
               />
             ) : room.phase === 'lobby' ? (
               <LobbyScreen

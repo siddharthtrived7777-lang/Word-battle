@@ -1,0 +1,213 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidRoomCode(code) {
+      return code is string && code.size() == 5 && code.matches('^[A-Z0-9]{5}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidSettings(settings) {
+      return settings is map &&
+        settings.keys().hasAll(['category', 'rounds', 'imposterCount']) &&
+        settings.keys().hasOnly(['category', 'rounds', 'imposterCount']) &&
+        settings.category is string &&
+        settings.category.size() >= 1 &&
+        settings.category.size() <= 40 &&
+        settings.rounds in [3, 4, 5] &&
+        settings.imposterCount in [1, 2];
+    }
+
+    function isValidRoom(data, roomCode) {
+      return data.keys().hasAll([
+          'code', 'hostId', 'phase', 'settings', 'players',
+          'usedPairIds', 'clues', 'votes', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'code', 'hostId', 'phase', 'settings', 'players',
+          'usedPairIds', 'roundConfig', 'clues', 'votes', 'outcome',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.code == roomCode &&
+        isValidRoomCode(data.code) &&
+        isValidId(data.hostId) &&
+        data.phase in ['lobby', 'reveal', 'discussion', 'voting', 'result'] &&
+        isValidSettings(data.settings) &&
+        data.players is map &&
+        data.players.size() <= 10 &&
+        data.usedPairIds is list &&
+        data.usedPairIds.size() <= 140 &&
+        (data.usedPairIds.size() == 0 || data.usedPairIds[0] is string) &&
+        data.clues is list &&
+        data.clues.size() <= 60 &&
+        (data.clues.size() == 0 || data.clues[0] is map) &&
+        data.votes is map &&
+        data.votes.size() <= 10 &&
+        (!('roundConfig' in data) || data.roundConfig == null || data.roundConfig is map) &&
+        (!('outcome' in data) || data.outcome == null || data.outcome is map) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSignal(data, signalId) {
+      return data.keys().hasAll(['id', 'from', 'to', 'type', 'data', 'timestamp', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'from', 'to', 'type', 'data', 'timestamp', 'createdAt']) &&
+        data.id == signalId &&
+        isValidId(data.id) &&
+        isValidId(data.from) &&
+        isValidId(data.to) &&
+        data.from == request.auth.uid &&
+        data.to != request.auth.uid &&
+        data.type in ['offer', 'answer', 'ice'] &&
+        data.data is map &&
+        data.timestamp is number &&
+        data.createdAt is timestamp;
+    }
+
+    // 4. Connection Validation Probe
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // 5. Game Rooms Collection
+    match /rooms/{roomCode} {
+      allow get: if isVerifiedUser() && isValidRoomCode(roomCode);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidRoom(incoming(), roomCode) &&
+        incoming().hostId == request.auth.uid &&
+        incoming().phase == 'lobby' &&
+        incoming().players.keys().hasOnly([request.auth.uid]) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidRoom(incoming(), roomCode) &&
+        incoming().code == existing().code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Host manages room settings, phase transitions, host transfer, and score outcome
+          (
+            existing().hostId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'hostId', 'phase', 'settings', 'players', 'usedPairIds',
+              'roundConfig', 'clues', 'votes', 'outcome', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Joining player in lobby adds only their own UID to players
+          (
+            existing().phase == 'lobby' &&
+            !(request.auth.uid in existing().players.keys()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['players', 'updatedAt']) &&
+            incoming().players.keys().hasAll(existing().players.keys()) &&
+            incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid])
+          ) ||
+          // Action 3: Existing member updates self (or leaves), submits clue, casts own vote, advances own active turn, or claims host if host left
+          (
+            request.auth.uid in existing().players.keys() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'players', 'clues', 'votes', 'roundConfig', 'phase', 'hostId', 'updatedAt'
+            ]) &&
+            (
+              incoming().phase == existing().phase ||
+              (
+                existing().phase == 'discussion' &&
+                incoming().phase == 'voting' &&
+                existing().roundConfig != null &&
+                existing().roundConfig.turnOrder[existing().roundConfig.currentTurnIndex] == request.auth.uid
+              )
+            ) &&
+            (
+              incoming().players == existing().players ||
+              (
+                incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid]) &&
+                (
+                  !(request.auth.uid in incoming().players.keys()) ||
+                  incoming().players[request.auth.uid].score == existing().players[request.auth.uid].score
+                )
+              )
+            ) &&
+            (
+              incoming().votes == existing().votes ||
+              (existing().phase == 'voting' && incoming().votes.diff(existing().votes).affectedKeys().hasOnly([request.auth.uid])) ||
+              (existing().phase == 'discussion' && incoming().phase == 'voting' && incoming().votes.size() == 0)
+            ) &&
+            (
+              incoming().roundConfig == existing().roundConfig ||
+              (
+                existing().phase == 'discussion' &&
+                existing().roundConfig != null &&
+                existing().roundConfig.turnOrder[existing().roundConfig.currentTurnIndex] == request.auth.uid
+              )
+            ) &&
+            (
+              incoming().hostId == existing().hostId ||
+              (!(existing().hostId in incoming().players.keys()) && incoming().hostId == request.auth.uid)
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        (
+          existing().hostId == request.auth.uid ||
+          (existing().players.size() <= 1 && request.auth.uid in existing().players.keys())
+        );
+
+      // 6. WebRTC Signaling Subcollection
+      match /signals/{signalId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+
+        allow list: if isVerifiedUser() &&
+          resource.data.to == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isValidSignal(incoming(), signalId) &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/rooms/$(roomCode));
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+      }
+    }
+  }
+}
