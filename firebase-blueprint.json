@@ -2,7 +2,7 @@
   "entities": {
     "Room": {
       "title": "Room",
-      "description": "Multiplayer Imposter Word game room state, settings, players map, clues, votes, and round outcome.",
+      "description": "Multiplayer Word Battle game room state, settings, players map, clues, votes, and round outcome.",
       "type": "object",
       "properties": {
         "code": {
@@ -115,16 +115,124 @@
         }
       },
       "required": ["id", "from", "to", "type", "data", "timestamp", "createdAt"]
+    },
+    "AnimalRoom": {
+      "title": "AnimalRoom",
+      "description": "2-player Guess the Animal room state, turn tracking, Q&A history, and finish outcome without exposing secret animals.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "hostId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "playerIds": {
+          "type": "array",
+          "description": "Exactly 1 or 2 player UIDs permitted in this room"
+        },
+        "players": {
+          "type": "object",
+          "description": "Map of up to 2 player profiles and pick status"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["lobby", "picking", "playing", "finished"]
+        },
+        "turnUid": {
+          "type": "string"
+        },
+        "askedCategoriesThisTurn": {
+          "type": "array"
+        },
+        "pendingQuestion": {
+          "type": "object"
+        },
+        "pendingGuess": {
+          "type": "object"
+        },
+        "history": {
+          "type": "array"
+        },
+        "winnerUid": {
+          "type": "string"
+        },
+        "revealedAnimals": {
+          "type": "object",
+          "description": "Empty until phase is finished, when each player reveals their own secret animal"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "code",
+        "hostId",
+        "playerIds",
+        "players",
+        "phase",
+        "askedCategoriesThisTurn",
+        "history",
+        "revealedAnimals",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AnimalSecret": {
+      "title": "AnimalSecret",
+      "description": "Private secret animal choice owned and readable strictly by a single player UID.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "animalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "animalId", "updatedAt"]
     }
   },
   "firestore": {
     "/rooms/{roomCode}": {
       "schema": { "$ref": "#/entities/Room" },
-      "description": "Active multiplayer game rooms keyed by 5-character room code."
+      "description": "Active Word Battle multiplayer game rooms keyed by 5-character room code."
     },
     "/rooms/{roomCode}/signals/{signalId}": {
       "schema": { "$ref": "#/entities/Signal" },
       "description": "Ephemeral WebRTC voice signaling payloads targeted to a specific player UID."
+    },
+    "/animal_rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/AnimalRoom" },
+      "description": "Active 2-player Guess the Animal rooms keyed by 5-character room code."
+    },
+    "/animal_rooms/{roomCode}/secrets/{uid}": {
+      "schema": { "$ref": "#/entities/AnimalSecret" },
+      "description": "Player-private secret animal document readable and writable strictly by its owner UID."
+    },
+    "/animal_rooms/{roomCode}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "Optional WebRTC voice signaling payloads between the 2 Guess the Animal players."
     }
   }
 }

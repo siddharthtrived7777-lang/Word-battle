@@ -1,23 +1,31 @@
-# Security Specification — Imposter Word
+# Security Specification — Party Arcade (Word Battle & Guess the Animal)
 
 ## 1. Data Invariants
-1. **Authenticated & Verified Access Only**: Every read and write on `/rooms/{roomCode}` and `/rooms/{roomCode}/signals/{signalId}` requires `request.auth != null && request.auth.token.email_verified == true`.
-2. **No Room Scraping (`allow list: if false`)**: Clients may only `get` a room when they know its exact 5-character `roomCode` (`^[A-Z0-9]{5}$`). Listing all rooms is strictly forbidden.
-3. **Creator Ownership & Immutability**: On room creation, `hostId` MUST equal `request.auth.uid`, `phase` MUST be `'lobby'`, `players` MUST contain only `request.auth.uid`, and `createdAt == request.time && updatedAt == request.time`. After creation, `code` and `createdAt` are immutable.
-4. **Zero PII Exposure**: Neither `rooms` nor `signals` store email addresses, phone numbers, or user account metadata.
-5. **Bounded Structures**: `players` is capped at 10 entries, `votes` at 10 entries, `clues` at 60 items, `usedPairIds` at 140 items.
-6. **Signal Privacy & Sender Integrity**: Signals at `/rooms/{roomCode}/signals/{signalId}` can only be created with `from == request.auth.uid` for an existing parent room, listed only where `resource.data.to == request.auth.uid`, and read/deleted only by `from` or `to`.
+1. **Authenticated & Verified Access Only**: Every read and write on `/rooms`, `/animal_rooms`, `/secrets`, and `/signals` requires `request.auth != null && request.auth.token.email_verified == true`.
+2. **No Blanket Room Scraping**:
+   - `/rooms`: `allow list: if false;`
+   - `/animal_rooms`: `allow list` is strictly scoped to `request.auth.uid in resource.data.playerIds` so users can only list their own active matches for rejoin.
+3. **Strict 2-Player Isolation (`/animal_rooms/{roomCode}`)**:
+   - `playerIds` is strictly capped at 2 entries.
+   - Once 2 players are in the room (or `phase != 'lobby'`), any 3rd user receives `PERMISSION_DENIED` on both `get` and `update`.
+   - Active game updates and deletes are permitted exclusively when `request.auth.uid in existing().playerIds`.
+4. **Secret Animal Privacy (`/animal_rooms/{roomCode}/secrets/{uid}`)**:
+   - `allow list: if false;` prevents enumerating secrets.
+   - `allow get, create, update, delete` strictly requires `request.auth.uid == uid` and room membership. An opponent can never read `/secrets/{opponentUid}` under any circumstance.
+   - `revealedAnimals` on the parent room doc must remain empty (`size() == 0`) until `phase == 'finished'`, when each player may write only their own UID entry.
+5. **Creator Ownership & Immutability**: `code` and `createdAt` are immutable; `createdAt` and `updatedAt` are validated against `request.time`.
+6. **Signal Privacy & Sender Integrity**: Signals require `from == request.auth.uid`, an existing parent room, and `list` filtered to `resource.data.to == request.auth.uid`.
 
 ## 2. The "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
 1. Unauthenticated `get` on `/rooms/ABC12`.
 2. Unverified email (`email_verified: false`) `create` on `/rooms/ABC12`.
-3. Collection `list` query on `/rooms`.
+3. Blanket `list` query on `/rooms` or `/animal_rooms` without `playerIds` filter.
 4. Room `create` with spoofed `hostId` (`hostId != request.auth.uid`).
 5. Room `create` with shadow field (`isAdmin: true`).
 6. Room `create` with forged client `createdAt` timestamp (`createdAt != request.time`).
-7. Room `create` with invalid room code ID (`rooms/ab12` or 1.5KB junk ID).
-8. Room `update` mutating immutable `code` or `createdAt` field.
-9. Non-host player trying to change `phase` or `settings` in `lobby`.
-10. Signal `create` with spoofed `from` UID (`from != request.auth.uid`).
-11. Signal `list` query without `where('to', '==', uid)` filter.
-12. Signal `create` referencing a non-existent parent room (`exists()` fails).
+7. Invalid room code ID (`animal_rooms/ab12` or 200-char junk ID).
+8. Mutating immutable `code` or `createdAt` field on `update`.
+9. 3rd player attempting `get` or `update` (join) on a 2-player `/animal_rooms/ABC12` room.
+10. Opponent (`u2`) attempting `get` or `list` on `/animal_rooms/ABC12/secrets/u1`.
+11. Player writing `revealedAnimals` while `phase != 'finished'` or writing opponent's secret key.
+12. Spoofed signal sender (`from != request.auth.uid`) or unfiltered `signals` list query.

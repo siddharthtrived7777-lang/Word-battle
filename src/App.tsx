@@ -1,5 +1,5 @@
 /**
- * Imposter Word — Multiplayer Social Deduction Party Game
+ * Party Arcade — Word Battle & Guess the Animal
  *
  * Uses provisioned Firebase Firestore + Google Authentication (configured via
  * `firebase-applet-config.json` and initialized in `src/firebase.ts`).
@@ -22,6 +22,12 @@ import {
   PlayerAvatar,
   RoomState,
 } from './types/game';
+import {
+  AnimalPlayer,
+  AnimalRoomState,
+  AnimalTraitOption,
+  QuestionCategoryId,
+} from './types/animalGame';
 import { t } from './data/i18n';
 import {
   computeRoundOutcome,
@@ -31,20 +37,32 @@ import {
   getSortedPlayers,
 } from './utils/gameLogic';
 import { roomTransport } from './services/roomTransport';
-import { useVoiceChat } from './hooks/useVoiceChat';
+import {
+  animalRoomService,
+  loadFlippedIds,
+  saveActiveAnimalRoomCode,
+  saveFlippedIds,
+} from './services/animalRoomService';
+import { useVoiceChat, VoiceTransportAdapter } from './hooks/useVoiceChat';
 import { soundFx } from './utils/soundFx';
 import { AVATAR_COLORS, AVATAR_EMOJIS } from './components/Avatar';
 import { TopBar } from './components/TopBar';
 import { VoiceBar } from './components/VoiceBar';
 import { FirebaseGuideModal } from './components/FirebaseGuideModal';
+import { GameHubScreen } from './screens/GameHubScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { LobbyScreen } from './screens/LobbyScreen';
 import { RoleRevealScreen } from './screens/RoleRevealScreen';
 import { DiscussionScreen } from './screens/DiscussionScreen';
 import { VotingScreen } from './screens/VotingScreen';
 import { ResultScreen } from './screens/ResultScreen';
+import { GuessAnimalMenuScreen } from './screens/GuessAnimalMenuScreen';
+import { GuessAnimalLobbyScreen } from './screens/GuessAnimalLobbyScreen';
+import { GuessAnimalGameScreen } from './screens/GuessAnimalGameScreen';
 
 void FIREBASE_CONFIG;
+
+type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal';
 
 function loadStoredProfile() {
   try {
@@ -82,13 +100,7 @@ export default function App() {
   const [lang, setLang] = useState<Language>(initial.lang);
   const [playerName, setPlayerName] = useState<string>(initial.name);
   const [avatar, setAvatar] = useState<PlayerAvatar>(initial.avatar);
-  const [room, setRoom] = useState<RoomState | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [loadingAction, setLoadingAction] = useState<'create' | 'join' | null>(null);
-  const [showFirebaseGuide, setShowFirebaseGuide] = useState(false);
   const [sfxEnabled, setSfxEnabled] = useState(true);
-
-  const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
 
   const initialJoinCode = useMemo(() => {
     try {
@@ -99,11 +111,38 @@ export default function App() {
     }
   }, []);
 
+  const [activeGame, setActiveGame] = useState<ActiveHubSection>(() =>
+    initialJoinCode ? 'word_battle' : 'hub'
+  );
+
+  // Word Battle State (preserved identically)
+  const [room, setRoom] = useState<RoomState | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [loadingAction, setLoadingAction] = useState<'create' | 'join' | null>(null);
+  const [showFirebaseGuide, setShowFirebaseGuide] = useState(false);
+
+  // Guess the Animal State
+  const [animalRoom, setAnimalRoom] = useState<AnimalRoomState | null>(null);
+  const [myAnimalSecretId, setMyAnimalSecretId] = useState<string | null>(null);
+  const [rejoinAnimalRoom, setRejoinAnimalRoom] = useState<AnimalRoomState | null>(null);
+  const [flippedIds, setFlippedIds] = useState<string[]>([]);
+  const [animalErrorMsg, setAnimalErrorMsg] = useState<string | null>(null);
+  const [animalLoadingAction, setAnimalLoadingAction] = useState<
+    'create' | 'join' | 'rejoin' | null
+  >(null);
+  const [animalVoiceEnabled, setAnimalVoiceEnabled] = useState(false);
+
+  const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
+
   const roomRef = useRef<RoomState | null>(null);
   roomRef.current = room;
 
   const lastTurnAdvanceKeyRef = useRef<string>('');
   const advancingResultRef = useRef<boolean>(false);
+  const startingPlayingPhaseRef = useRef<string>('');
+  const resolvingQuestionRef = useRef<string>('');
+  const resolvingGuessRef = useRef<string>('');
+  const revealingFinishRef = useRef<string>('');
 
   useEffect(() => {
     if (!firestoreEnabled) return;
@@ -115,7 +154,11 @@ export default function App() {
       }
       if (!user) {
         roomTransport.cleanup();
+        animalRoomService.cleanup();
         setRoom(null);
+        setAnimalRoom(null);
+        setMyAnimalSecretId(null);
+        setRejoinAnimalRoom(null);
       }
     });
     return () => unsub();
@@ -132,6 +175,7 @@ export default function App() {
     }
   }, [playerName, lang, avatar]);
 
+  // Voice chat for Word Battle
   const {
     micStatus,
     isMuted,
@@ -141,14 +185,147 @@ export default function App() {
     handleSignal,
   } = useVoiceChat(myId, Boolean(room), room?.players);
 
+  // Optional voice chat for Guess the Animal
+  const animalRoomCodeRef = useRef<string | null>(null);
+  animalRoomCodeRef.current = animalRoom?.code ?? null;
+
+  const animalVoiceAdapter = useMemo<VoiceTransportAdapter>(
+    () => ({
+      sendSignal: (signal) => {
+        if (!animalRoomCodeRef.current) return Promise.resolve();
+        return animalRoomService.sendSignal(animalRoomCodeRef.current, signal);
+      },
+      updateMuteState: (playerId, muted) => {
+        if (!animalRoomCodeRef.current) return Promise.resolve();
+        return animalRoomService.updateMuteState(animalRoomCodeRef.current, playerId, muted);
+      },
+    }),
+    []
+  );
+
+  const animalVoice = useVoiceChat(
+    myId,
+    Boolean(animalRoom && animalVoiceEnabled),
+    animalRoom?.players,
+    animalVoiceAdapter
+  );
+
+  const handleToggleAnimalVoice = async () => {
+    if (animalVoiceEnabled) {
+      animalVoice.stopMicrophone();
+      setAnimalVoiceEnabled(false);
+    } else {
+      setAnimalVoiceEnabled(true);
+      await animalVoice.requestMicrophone();
+    }
+  };
+
+  // Discover active Guess the Animal room to offer rejoin after disconnect
+  useEffect(() => {
+    if (!firestoreEnabled || !authUser || animalRoom) return;
+    if (activeGame !== 'guess_animal') return;
+
+    let cancelled = false;
+    animalRoomService
+      .findActiveRejoinRoom(authUser.uid)
+      .then((found) => {
+        if (!cancelled) {
+          setRejoinAnimalRoom(found);
+        }
+      })
+      .catch(() => {
+        // Ignore lookup error
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGame, animalRoom, authUser, firestoreEnabled]);
+
+  // Restore flipped card state when joining/rejoining a Guess the Animal room
+  useEffect(() => {
+    if (!animalRoom) {
+      setFlippedIds([]);
+      return;
+    }
+    if (animalRoom.phase === 'picking' && animalRoom.history.length === 0) {
+      setFlippedIds([]);
+      saveFlippedIds(animalRoom.code, myId, []);
+    } else if (animalRoom.phase === 'playing') {
+      setFlippedIds(loadFlippedIds(animalRoom.code, myId));
+    }
+  }, [animalRoom?.code, animalRoom?.phase, animalRoom?.history.length, myId]);
+
+  // Auto-advance Guess the Animal from 'picking' -> 'playing' when both players picked
+  useEffect(() => {
+    if (!animalRoom || animalRoom.phase !== 'picking' || animalRoom.hostId !== myId) return;
+    const bothReady =
+      animalRoom.playerIds.length === 2 &&
+      animalRoom.playerIds.every((pid) => Boolean(animalRoom.players[pid]?.pickedSecret));
+    const key = `${animalRoom.code}_picking_done`;
+    if (bothReady && startingPlayingPhaseRef.current !== key) {
+      startingPlayingPhaseRef.current = key;
+      animalRoomService.beginPlayingPhase(animalRoom.code).catch(() => {});
+    } else if (!bothReady) {
+      startingPlayingPhaseRef.current = '';
+    }
+  }, [animalRoom, myId]);
+
+  // Auto-answer pending question from opponent's secret animal
+  useEffect(() => {
+    if (!animalRoom || animalRoom.phase !== 'playing' || !animalRoom.pendingQuestion) return;
+    const pq = animalRoom.pendingQuestion;
+    if (pq.byUid === myId || !myAnimalSecretId) return;
+    if (resolvingQuestionRef.current === pq.id) return;
+    resolvingQuestionRef.current = pq.id;
+
+    animalRoomService
+      .resolvePendingQuestion(animalRoom.code, myAnimalSecretId, pq, animalRoom.history)
+      .catch(() => {
+        resolvingQuestionRef.current = '';
+      });
+  }, [animalRoom, myAnimalSecretId, myId]);
+
+  // Auto-evaluate pending guess from opponent's secret animal
+  useEffect(() => {
+    if (!animalRoom || animalRoom.phase !== 'playing' || !animalRoom.pendingGuess) return;
+    const pg = animalRoom.pendingGuess;
+    if (pg.byUid === myId || !myAnimalSecretId) return;
+    if (resolvingGuessRef.current === pg.id) return;
+    resolvingGuessRef.current = pg.id;
+
+    animalRoomService
+      .resolvePendingGuess(animalRoom.code, myId, myAnimalSecretId, pg, animalRoom.history)
+      .catch(() => {
+        resolvingGuessRef.current = '';
+      });
+  }, [animalRoom, myAnimalSecretId, myId]);
+
+  // Reveal own secret animal cleanly when match finishes
+  useEffect(() => {
+    if (!animalRoom || animalRoom.phase !== 'finished' || !myAnimalSecretId) return;
+    if (animalRoom.revealedAnimals[myId]) return;
+    const key = `${animalRoom.code}_${animalRoom.updatedAt}_${myId}`;
+    if (revealingFinishRef.current === key) return;
+    revealingFinishRef.current = key;
+
+    animalRoomService
+      .revealMySecretOnFinish(animalRoom.code, myId, myAnimalSecretId)
+      .catch(() => {
+        revealingFinishRef.current = '';
+      });
+  }, [animalRoom, myAnimalSecretId, myId]);
+
   const handleSignIn = async () => {
     setErrorMsg(null);
+    setAnimalErrorMsg(null);
     setSigningIn(true);
     try {
       await signInWithGoogle();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sign-in failed';
       setErrorMsg(msg);
+      setAnimalErrorMsg(msg);
     } finally {
       setSigningIn(false);
     }
@@ -156,7 +333,13 @@ export default function App() {
 
   const handleSignOut = async () => {
     await roomTransport.leaveRoom();
+    if (animalRoom) {
+      await animalRoomService.leaveRoom(animalRoom.code, myId);
+    }
     setRoom(null);
+    setAnimalRoom(null);
+    setMyAnimalSecretId(null);
+    setRejoinAnimalRoom(null);
     await signOutFirebase();
   };
 
@@ -200,10 +383,29 @@ export default function App() {
     [lang]
   );
 
+  const mapAnimalError = useCallback(
+    (code: string) => {
+      switch (code) {
+        case 'GTA_ROOM_FULL':
+          return t(lang, 'gtaErrRoomFull');
+        case 'GTA_GAME_STARTED':
+          return t(lang, 'gtaErrGameStarted');
+        case 'GTA_ROOM_NOT_FOUND':
+          return t(lang, 'gtaErrRoomNotFound');
+        case 'AUTH_REQUIRED':
+          return t(lang, 'signInRequired');
+        default:
+          return `${t(lang, 'errConnectionFailed')} (${code})`;
+      }
+    },
+    [lang]
+  );
+
+  // ---------------- Word Battle Handlers (unchanged) ----------------
   const buildLocalPlayer = useCallback(
     (isHost: boolean): Player => ({
       id: myId,
-      name: playerName.trim(),
+      name: playerName.trim() || authUser?.displayName || 'Player',
       avatar,
       isHost,
       connected: true,
@@ -212,7 +414,7 @@ export default function App() {
       isMuted: false,
       readyForDiscussion: false,
     }),
-    [avatar, myId, playerName]
+    [authUser?.displayName, avatar, myId, playerName]
   );
 
   const handleCreateRoom = async () => {
@@ -498,20 +700,181 @@ export default function App() {
     });
   };
 
+  // ---------------- Guess the Animal Handlers ----------------
+  const buildAnimalPlayer = useCallback(
+    (isHost: boolean): AnimalPlayer => ({
+      id: myId,
+      name: playerName.trim() || authUser?.displayName || 'Player',
+      avatar,
+      isHost,
+      connected: true,
+      joinedAt: Date.now(),
+      isMuted: false,
+      pickedSecret: false,
+    }),
+    [authUser?.displayName, avatar, myId, playerName]
+  );
+
+  const handleCreateAnimalRoom = async () => {
+    if (firestoreEnabled && !authUser) {
+      setAnimalErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    setAnimalErrorMsg(null);
+    setAnimalLoadingAction('create');
+
+    try {
+      const me = buildAnimalPlayer(true);
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const code = generateRoomCode();
+        try {
+          await animalRoomService.createRoom(code, me, {
+            onRoomUpdate: setAnimalRoom,
+            onSecretUpdate: setMyAnimalSecretId,
+            onSignal: animalVoice.handleSignal,
+          });
+          setRejoinAnimalRoom(null);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!(err instanceof Error && err.message === 'ROOM_EXISTS')) {
+            throw err;
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setAnimalErrorMsg(mapAnimalError(msg));
+    } finally {
+      setAnimalLoadingAction(null);
+    }
+  };
+
+  const handleJoinAnimalRoom = async (
+    rawCode: string,
+    actionType: 'join' | 'rejoin' = 'join'
+  ) => {
+    if (firestoreEnabled && !authUser) {
+      setAnimalErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    const cleanCode = rawCode.toUpperCase().trim();
+    if (cleanCode.length !== 5) {
+      setAnimalErrorMsg(t(lang, 'errInvalidCode'));
+      return;
+    }
+
+    setAnimalErrorMsg(null);
+    setAnimalLoadingAction(actionType);
+
+    try {
+      const me = buildAnimalPlayer(false);
+      await animalRoomService.joinRoom(cleanCode, me, {
+        onRoomUpdate: setAnimalRoom,
+        onSecretUpdate: setMyAnimalSecretId,
+        onSignal: animalVoice.handleSignal,
+      });
+      setRejoinAnimalRoom(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setAnimalErrorMsg(mapAnimalError(msg));
+    } finally {
+      setAnimalLoadingAction(null);
+    }
+  };
+
+  const handleExitAnimalRoom = async () => {
+    if (animalRoom) {
+      await animalRoomService.leaveRoom(animalRoom.code, myId);
+    }
+    animalVoice.stopMicrophone();
+    setAnimalVoiceEnabled(false);
+    setAnimalRoom(null);
+    setMyAnimalSecretId(null);
+    setRejoinAnimalRoom(null);
+    setAnimalErrorMsg(null);
+    startingPlayingPhaseRef.current = '';
+    resolvingQuestionRef.current = '';
+    resolvingGuessRef.current = '';
+    revealingFinishRef.current = '';
+  };
+
+  const handleToggleFlipAnimal = (animalId: string) => {
+    if (!animalRoom) return;
+    soundFx.click();
+    setFlippedIds((prev) => {
+      const next = prev.includes(animalId)
+        ? prev.filter((id) => id !== animalId)
+        : [...prev, animalId];
+      saveFlippedIds(animalRoom.code, myId, next);
+      return next;
+    });
+  };
+
   const playersList = room ? getSortedPlayers(room.players) : [];
   const speakingNames = playersList
     .filter((p) => speakingIds[p.id])
     .map((p) => p.name);
 
-  const screenKey = room ? room.phase : 'home';
+  const screenKey =
+    activeGame === 'hub'
+      ? 'hub'
+      : activeGame === 'word_battle'
+        ? room
+          ? `wb_${room.phase}`
+          : 'wb_home'
+        : animalRoom
+          ? `gta_${animalRoom.phase}`
+          : 'gta_menu';
+
+  const topBarTitle =
+    activeGame === 'hub'
+      ? t(lang, 'hubBrand')
+      : activeGame === 'guess_animal'
+        ? t(lang, 'gtaTitle')
+        : t(lang, 'appTitle');
+
+  const topBarSubtitle =
+    activeGame === 'hub'
+      ? t(lang, 'hubSubtitle')
+      : activeGame === 'guess_animal'
+        ? t(lang, 'gtaCardBadge')
+        : t(lang, 'tagline');
+
+  const activeRoomCode =
+    activeGame === 'word_battle'
+      ? room?.code
+      : activeGame === 'guess_animal'
+        ? animalRoom?.code
+        : undefined;
 
   return (
-    <div className="min-h-screen bg-[#0B0F17] text-slate-100 flex flex-col">
+    <div
+      className={`min-h-screen flex flex-col ${
+        activeGame === 'guess_animal'
+          ? 'bg-[#FEF9EC] text-slate-900'
+          : 'bg-[#0B0F17] text-slate-100'
+      }`}
+    >
       <TopBar
         lang={lang}
         onToggleLang={handleToggleLang}
-        roomCode={room?.code}
-        onLeaveRoom={room ? handleLeaveRoom : undefined}
+        title={topBarTitle}
+        subtitle={topBarSubtitle}
+        roomCode={activeRoomCode}
+        onLeaveRoom={activeGame === 'word_battle' && room ? handleLeaveRoom : undefined}
+        onBackToHub={
+          activeGame !== 'hub' && !room && !animalRoom
+            ? () => {
+                setErrorMsg(null);
+                setAnimalErrorMsg(null);
+                setActiveGame('hub');
+              }
+            : undefined
+        }
         sfxEnabled={sfxEnabled}
         onToggleSfx={handleToggleSfx}
       />
@@ -525,80 +888,195 @@ export default function App() {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
           >
-            {!room ? (
-              <HomeScreen
+            {activeGame === 'hub' ? (
+              <GameHubScreen
                 lang={lang}
                 playerName={playerName}
                 setPlayerName={setPlayerName}
                 avatar={avatar}
                 setAvatar={setAvatar}
-                initialJoinCode={initialJoinCode}
-                onCreateRoom={handleCreateRoom}
-                onJoinRoom={handleJoinRoom}
-                onOpenFirebaseGuide={() => setShowFirebaseGuide(true)}
-                errorMsg={errorMsg}
-                loadingAction={loadingAction}
                 authReady={authReady}
                 authUser={authUser}
                 onSignIn={handleSignIn}
                 onSignOut={handleSignOut}
                 signingIn={signingIn}
+                errorMsg={errorMsg}
+                onSelectWordBattle={() => setActiveGame('word_battle')}
+                onSelectGuessAnimal={() => setActiveGame('guess_animal')}
               />
-            ) : room.phase === 'lobby' ? (
-              <LobbyScreen
+            ) : activeGame === 'word_battle' ? (
+              !room ? (
+                <HomeScreen
+                  lang={lang}
+                  playerName={playerName}
+                  setPlayerName={setPlayerName}
+                  avatar={avatar}
+                  setAvatar={setAvatar}
+                  initialJoinCode={initialJoinCode}
+                  onCreateRoom={handleCreateRoom}
+                  onJoinRoom={handleJoinRoom}
+                  onOpenFirebaseGuide={() => setShowFirebaseGuide(true)}
+                  errorMsg={errorMsg}
+                  loadingAction={loadingAction}
+                  authReady={authReady}
+                  authUser={authUser}
+                  onSignIn={handleSignIn}
+                  onSignOut={handleSignOut}
+                  signingIn={signingIn}
+                />
+              ) : room.phase === 'lobby' ? (
+                <LobbyScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onUpdateSettings={handleUpdateSettings}
+                  onStartGame={handleStartGame}
+                />
+              ) : room.phase === 'reveal' ? (
+                <RoleRevealScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onMarkReady={handleMarkReady}
+                  onForceStartDiscussion={handleStartDiscussion}
+                />
+              ) : room.phase === 'discussion' ? (
+                <DiscussionScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onAdvanceTurn={handleAdvanceTurn}
+                  onSendClue={handleSendClue}
+                  onForceVoting={handleForceVoting}
+                />
+              ) : room.phase === 'voting' ? (
+                <VotingScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onCastVote={handleCastVote}
+                  onForceRevealResults={finalizeVoting}
+                />
+              ) : (
+                <ResultScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onPlayAgain={handlePlayAgain}
+                />
+              )
+            ) : !animalRoom ? (
+              <GuessAnimalMenuScreen
                 lang={lang}
-                room={room}
-                myId={myId}
-                speakingIds={speakingIds}
-                onUpdateSettings={handleUpdateSettings}
-                onStartGame={handleStartGame}
+                playerName={playerName}
+                authReady={authReady}
+                authUser={authUser}
+                signingIn={signingIn}
+                onSignIn={handleSignIn}
+                onCreateRoom={handleCreateAnimalRoom}
+                onJoinRoom={(code) => handleJoinAnimalRoom(code, 'join')}
+                onBack={() => {
+                  setAnimalErrorMsg(null);
+                  setActiveGame('hub');
+                }}
+                rejoinRoom={rejoinAnimalRoom}
+                onRejoin={(code) => handleJoinAnimalRoom(code, 'rejoin')}
+                onDismissRejoin={() => {
+                  if (authUser) saveActiveAnimalRoomCode(authUser.uid, null);
+                  setRejoinAnimalRoom(null);
+                }}
+                errorMsg={animalErrorMsg}
+                loadingAction={animalLoadingAction}
               />
-            ) : room.phase === 'reveal' ? (
-              <RoleRevealScreen
+            ) : animalRoom.phase === 'lobby' ? (
+              <GuessAnimalLobbyScreen
                 lang={lang}
-                room={room}
+                room={animalRoom}
                 myId={myId}
-                speakingIds={speakingIds}
-                onMarkReady={handleMarkReady}
-                onForceStartDiscussion={handleStartDiscussion}
-              />
-            ) : room.phase === 'discussion' ? (
-              <DiscussionScreen
-                lang={lang}
-                room={room}
-                myId={myId}
-                speakingIds={speakingIds}
-                onAdvanceTurn={handleAdvanceTurn}
-                onSendClue={handleSendClue}
-                onForceVoting={handleForceVoting}
-              />
-            ) : room.phase === 'voting' ? (
-              <VotingScreen
-                lang={lang}
-                room={room}
-                myId={myId}
-                speakingIds={speakingIds}
-                onCastVote={handleCastVote}
-                onForceRevealResults={finalizeVoting}
+                speakingIds={animalVoice.speakingIds}
+                voiceEnabled={animalVoiceEnabled}
+                micStatus={animalVoice.micStatus}
+                isMuted={animalVoice.isMuted}
+                onToggleVoice={handleToggleAnimalVoice}
+                onToggleMute={animalVoice.toggleMute}
+                onStartMatch={() => animalRoomService.startMatch(animalRoom.code, animalRoom)}
+                onExit={handleExitAnimalRoom}
               />
             ) : (
-              <ResultScreen
+              <GuessAnimalGameScreen
                 lang={lang}
-                room={room}
+                room={animalRoom}
                 myId={myId}
-                speakingIds={speakingIds}
-                onPlayAgain={handlePlayAgain}
+                mySecretAnimalId={myAnimalSecretId}
+                flippedIds={flippedIds}
+                onToggleFlip={handleToggleFlipAnimal}
+                onLockSecret={(animalId) =>
+                  animalRoomService.submitSecretAnimal(animalRoom.code, myId, animalId)
+                }
+                onAskQuestion={(category: QuestionCategoryId, option: AnimalTraitOption) =>
+                  animalRoomService.askQuestion(
+                    animalRoom.code,
+                    myId,
+                    category,
+                    option,
+                    animalRoom.askedCategoriesThisTurn
+                  )
+                }
+                onEndTurn={() =>
+                  animalRoomService.endTurn(
+                    animalRoom.code,
+                    animalRoom.turnUid ?? myId,
+                    animalRoom.playerIds
+                  )
+                }
+                onSubmitGuess={(animalId) =>
+                  animalRoomService.submitGuess(animalRoom.code, myId, animalId)
+                }
+                onPlayAgain={async () => {
+                  startingPlayingPhaseRef.current = '';
+                  resolvingQuestionRef.current = '';
+                  resolvingGuessRef.current = '';
+                  revealingFinishRef.current = '';
+                  await animalRoomService.playAgain(animalRoom.code, myId, animalRoom);
+                }}
+                onExit={handleExitAnimalRoom}
+                voiceEnabled={animalVoiceEnabled}
+                micStatus={animalVoice.micStatus}
+                isMuted={animalVoice.isMuted}
+                speakingIds={animalVoice.speakingIds}
+                onToggleVoice={handleToggleAnimalVoice}
+                onToggleMute={animalVoice.toggleMute}
               />
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
-      <footer className={`border-t border-slate-800/60 text-center text-xs text-slate-400 px-4 py-4 ${room ? 'pb-24' : ''}`}>
-        Developed by <span className="text-slate-200 font-semibold">Siddharth Trivedi</span>
+      <footer
+        className={`text-center text-xs px-4 py-4 ${
+          activeGame === 'guess_animal'
+            ? 'border-t border-amber-200 text-slate-600'
+            : 'border-t border-slate-800/60 text-slate-400'
+        } ${activeGame === 'word_battle' && room ? 'pb-24' : ''}`}
+      >
+        Developed by{' '}
+        <span
+          className={
+            activeGame === 'guess_animal'
+              ? 'text-slate-900 font-bold'
+              : 'text-slate-200 font-semibold'
+          }
+        >
+          Siddharth Trivedi
+        </span>
       </footer>
 
-      {room && (
+      {activeGame === 'word_battle' && room && (
         <VoiceBar
           lang={lang}
           micStatus={micStatus}

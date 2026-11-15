@@ -32,7 +32,7 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // 3. Entity Validation Blueprints
+    // 3. Entity Validation Blueprints (Word Battle)
     function isValidSettings(settings) {
       return settings is map &&
         settings.keys().hasAll(['category', 'rounds', 'imposterCount']) &&
@@ -90,13 +90,67 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
-    // 4. Connection Validation Probe
+    // 4. Entity Validation Blueprints (Guess the Animal - Strictly 2 Players)
+    function isValidAnimalRoom(data, roomCode) {
+      return data.keys().hasAll([
+          'code', 'hostId', 'playerIds', 'players', 'phase',
+          'askedCategoriesThisTurn', 'history', 'revealedAnimals',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'code', 'hostId', 'playerIds', 'players', 'phase',
+          'turnUid', 'askedCategoriesThisTurn', 'pendingQuestion',
+          'pendingGuess', 'history', 'winnerUid', 'revealedAnimals',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.code == roomCode &&
+        isValidRoomCode(data.code) &&
+        isValidId(data.hostId) &&
+        data.playerIds is list &&
+        data.playerIds.size() >= 1 &&
+        data.playerIds.size() <= 2 &&
+        data.players is map &&
+        data.players.size() >= 1 &&
+        data.players.size() <= 2 &&
+        data.phase in ['lobby', 'picking', 'playing', 'finished'] &&
+        (!('turnUid' in data) || data.turnUid == null || isValidId(data.turnUid)) &&
+        data.askedCategoriesThisTurn is list &&
+        data.askedCategoriesThisTurn.size() <= 6 &&
+        (!('pendingQuestion' in data) || data.pendingQuestion == null || data.pendingQuestion is map) &&
+        (!('pendingGuess' in data) || data.pendingGuess == null || data.pendingGuess is map) &&
+        data.history is list &&
+        data.history.size() <= 100 &&
+        (!('winnerUid' in data) || data.winnerUid == null || isValidId(data.winnerUid)) &&
+        data.revealedAnimals is map &&
+        data.revealedAnimals.size() <= 2 &&
+        (data.revealedAnimals.size() == 0 || data.phase == 'finished') &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAnimalSecret(data, uid) {
+      return data.keys().hasAll(['ownerId', 'animalId', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'animalId', 'updatedAt']) &&
+        data.ownerId == uid &&
+        isValidId(data.ownerId) &&
+        data.animalId is string &&
+        data.animalId.size() >= 1 &&
+        data.animalId.size() <= 40 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isAnimalRoomMember(roomCode) {
+      return exists(/databases/$(database)/documents/animal_rooms/$(roomCode)) &&
+        request.auth.uid in get(/databases/$(database)/documents/animal_rooms/$(roomCode)).data.playerIds;
+    }
+
+    // 5. Connection Validation Probe
     match /test/connection {
       allow get: if true;
       allow list, write: if false;
     }
 
-    // 5. Game Rooms Collection
+    // 6. Word Battle Rooms Collection
     match /rooms/{roomCode} {
       allow get: if isVerifiedUser() && isValidRoomCode(roomCode);
       allow list: if false;
@@ -184,7 +238,7 @@ service cloud.firestore {
           (existing().players.size() <= 1 && request.auth.uid in existing().players.keys())
         );
 
-      // 6. WebRTC Signaling Subcollection
+      // WebRTC Signaling Subcollection (Word Battle)
       match /signals/{signalId} {
         allow get: if isVerifiedUser() &&
           isValidRoomCode(roomCode) &&
@@ -200,6 +254,125 @@ service cloud.firestore {
           isValidSignal(incoming(), signalId) &&
           incoming().createdAt == request.time &&
           exists(/databases/$(database)/documents/rooms/$(roomCode));
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+      }
+    }
+
+    // 7. Guess the Animal Collection (Strictly 2-Player Isolation)
+    match /animal_rooms/{roomCode} {
+      // Only the 2 players in the room can read active game state; a 2nd player can read an open 1-player lobby to join
+      allow get: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        (
+          request.auth.uid in existing().playerIds ||
+          (existing().phase == 'lobby' && existing().playerIds.size() < 2)
+        );
+
+      // Allows a disconnected player to query only their own active rooms to rejoin
+      allow list: if isVerifiedUser() &&
+        request.auth.uid in resource.data.playerIds;
+
+      allow create: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidAnimalRoom(incoming(), roomCode) &&
+        incoming().hostId == request.auth.uid &&
+        incoming().phase == 'lobby' &&
+        incoming().playerIds.size() == 1 &&
+        incoming().playerIds[0] == request.auth.uid &&
+        incoming().players.keys().hasOnly([request.auth.uid]) &&
+        incoming().revealedAnimals.size() == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidAnimalRoom(incoming(), roomCode) &&
+        incoming().code == existing().code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: 2nd player joining an open 1-player lobby
+          (
+            existing().phase == 'lobby' &&
+            existing().playerIds.size() == 1 &&
+            !(request.auth.uid in existing().playerIds) &&
+            incoming().playerIds.size() == 2 &&
+            incoming().playerIds.hasAll(existing().playerIds) &&
+            request.auth.uid in incoming().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['playerIds', 'players', 'updatedAt']) &&
+            incoming().players.keys().hasAll(existing().players.keys()) &&
+            incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid])
+          ) ||
+          // Action 2: Only one of the 2 room members can write game state updates
+          (
+            request.auth.uid in existing().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'hostId', 'playerIds', 'players', 'phase', 'turnUid',
+              'askedCategoriesThisTurn', 'pendingQuestion', 'pendingGuess',
+              'history', 'winnerUid', 'revealedAnimals', 'updatedAt'
+            ]) &&
+            (
+              incoming().revealedAnimals == existing().revealedAnimals ||
+              (incoming().phase == 'picking' && incoming().revealedAnimals.size() == 0) ||
+              (incoming().phase == 'lobby' && incoming().revealedAnimals.size() == 0) ||
+              (
+                incoming().phase == 'finished' &&
+                incoming().revealedAnimals.diff(existing().revealedAnimals).affectedKeys().hasOnly([request.auth.uid])
+              )
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        request.auth.uid in existing().playerIds;
+
+      // Private Secret Animal Subcollection — NEVER readable by the opponent
+      match /secrets/{uid} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid &&
+          isAnimalRoomMember(roomCode);
+
+        allow list: if false;
+
+        allow create, update: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid &&
+          isValidAnimalSecret(incoming(), uid) &&
+          incoming().updatedAt == request.time &&
+          isAnimalRoomMember(roomCode);
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid;
+      }
+
+      // Optional 2-Player WebRTC Signaling Subcollection
+      match /signals/{signalId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isAnimalRoomMember(roomCode) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+
+        allow list: if isVerifiedUser() &&
+          resource.data.to == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isValidSignal(incoming(), signalId) &&
+          incoming().createdAt == request.time &&
+          isAnimalRoomMember(roomCode);
 
         allow update: if false;
 

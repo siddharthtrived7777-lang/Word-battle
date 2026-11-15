@@ -20,10 +20,26 @@ const RTC_CONFIG: RTCConfiguration = {
   ],
 };
 
+export interface VoiceTransportPlayer {
+  id: string;
+  connected: boolean;
+}
+
+export interface VoiceTransportAdapter {
+  sendSignal: (signal: Omit<SignalPayload, 'id' | 'timestamp'>) => Promise<void>;
+  updateMuteState: (playerId: string, isMuted: boolean) => Promise<void>;
+}
+
+const DEFAULT_ADAPTER: VoiceTransportAdapter = {
+  sendSignal: (signal) => roomTransport.sendSignal(signal),
+  updateMuteState: (playerId, isMuted) => roomTransport.updatePlayer(playerId, { isMuted }),
+};
+
 export function useVoiceChat(
   myId: string,
   inRoom: boolean,
-  players: Record<string, Player> | undefined
+  players: Record<string, Player | VoiceTransportPlayer> | undefined,
+  adapter?: VoiceTransportAdapter
 ) {
   const [micStatus, setMicStatus] = useState<MicPermissionState>('idle');
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -35,6 +51,8 @@ export function useVoiceChat(
   const peersRef = useRef<Map<string, PeerEntry>>(new Map());
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
+  const adapterRef = useRef<VoiceTransportAdapter>(adapter ?? DEFAULT_ADAPTER);
+  adapterRef.current = adapter ?? DEFAULT_ADAPTER;
 
   const ensureAudioContext = useCallback(() => {
     if (!audioCtxRef.current && typeof window !== 'undefined') {
@@ -49,6 +67,16 @@ export function useVoiceChat(
       audioCtxRef.current.resume().catch(() => {});
     }
     return audioCtxRef.current;
+  }, []);
+
+  const stopMicrophone = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    localAnalyserRef.current = null;
+    setMicStatus('idle');
+    setIsMuted(true);
   }, []);
 
   const requestMicrophone = useCallback(async () => {
@@ -116,7 +144,7 @@ export function useVoiceChat(
         });
       }
       if (inRoom) {
-        roomTransport.updatePlayer(myId, { isMuted: next }).catch(() => {});
+        adapterRef.current.updateMuteState(myId, next).catch(() => {});
       }
       return next;
     });
@@ -147,7 +175,7 @@ export function useVoiceChat(
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          roomTransport
+          adapterRef.current
             .sendSignal({
               from: myId,
               to: peerId,
@@ -204,7 +232,7 @@ export function useVoiceChat(
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          await roomTransport.sendSignal({
+          await adapterRef.current.sendSignal({
             from: myId,
             to: signal.from,
             type: 'answer',
@@ -271,7 +299,7 @@ export function useVoiceChat(
             .createOffer({ offerToReceiveAudio: true })
             .then(async (offer) => {
               await entry.pc.setLocalDescription(offer);
-              await roomTransport.sendSignal({
+              await adapterRef.current.sendSignal({
                 from: myId,
                 to: peerId,
                 type: 'offer',
@@ -346,6 +374,7 @@ export function useVoiceChat(
     isMuted,
     speakingIds,
     requestMicrophone,
+    stopMicrophone,
     toggleMute,
     handleSignal,
   };

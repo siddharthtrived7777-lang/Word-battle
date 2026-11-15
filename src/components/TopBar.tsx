@@ -1,13 +1,16 @@
 import React from 'react';
-import { LogOut, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, LogOut, Volume2, VolumeX } from 'lucide-react';
 import { Language } from '../types/game';
 import { t } from '../data/i18n';
 
 interface TopBarProps {
   lang: Language;
   onToggleLang: () => void;
+  title?: string;
+  subtitle?: string;
   roomCode?: string;
   onLeaveRoom?: () => void;
+  onBackToHub?: () => void;
   sfxEnabled: boolean;
   onToggleSfx: () => void;
 }
@@ -15,18 +18,32 @@ interface TopBarProps {
 export const TopBar: React.FC<TopBarProps> = ({
   lang,
   onToggleLang,
+  title,
+  subtitle,
   roomCode,
   onLeaveRoom,
+  onBackToHub,
   sfxEnabled,
   onToggleSfx,
 }) => {
   return (
     <header className="sticky top-0 z-30 h-14 bg-[#0B0F17]/90 backdrop-blur-md border-b border-slate-800/80">
       <div className="max-w-5xl mx-auto h-full px-4 flex items-center justify-between gap-4">
-        {/* Zone 1: Brand wordmark */}
+        {/* Zone 1: Brand wordmark + optional Back to Hub */}
         <div className="flex items-center gap-2.5 min-w-0">
+          {onBackToHub && !roomCode && (
+            <button
+              type="button"
+              onClick={onBackToHub}
+              className="min-h-[36px] px-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors"
+              aria-label={t(lang, 'backToHub')}
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t(lang, 'backToHub')}</span>
+            </button>
+          )}
           <span className="font-display text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0">
-            {t(lang, 'appTitle')}
+            {title ?? t(lang, 'appTitle')}
           </span>
         </div>
 
@@ -41,7 +58,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         ) : (
           <div className="hidden sm:block text-xs text-slate-400 truncate">
-            {t(lang, 'tagline')}
+            {subtitle ?? t(lang, 'tagline')}
           </div>
         )}
 

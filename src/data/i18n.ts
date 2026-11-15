@@ -113,6 +113,129 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     // Transport info
     modeLocalWs: 'Live Room Server',
     modeFirebaseRtdb: 'Firebase Firestore',
+    // Game Hub
+    hubBrand: 'Party Arcade',
+    hubTitle: 'Choose a Game',
+    hubSubtitle: 'Play live with friends on voice or text — pick a game below.',
+    hubSignInHint: 'Sign in with Google once to create or join live multiplayer rooms.',
+    playNow: 'Play Now',
+    backToHub: 'Back to Games',
+    wbCardBadge: '3–10 Players · Party',
+    wbCardBadgeUpdated: '2–10 Players · Social Deduction',
+    gtaTitle: 'Guess the Animal',
+    gtaDesc: 'Ask yes/no questions to narrow down which animal your opponent chose, and guess it before they do',
+    gtaCardBadge: '2 Players · Deduction',
+    // Guess the Animal Menu & How To Play
+    gtaPlayWithFriend: 'Play with Friend',
+    gtaCreateRoom: 'Create 2-Player Room',
+    gtaJoinRoom: 'Join Friend’s Room',
+    gtaRoomCodePlaceholder: '5-letter code',
+    gtaJoinBtn: 'Join Match',
+    gtaBack: 'Back',
+    gtaStepOf: 'Step',
+    gtaNext: 'Next',
+    gtaOk: 'OK',
+    gtaHow1Title: 'Choose your animal',
+    gtaHow1Body: 'At the start of the match, secretly pick one of the 30 animals on your board. Your opponent cannot see your choice.',
+    gtaHow2Title: 'Ask questions to discover traits',
+    gtaHow2Body: 'On your turn, pick a category and trait — the game checks your opponent’s secret animal and replies Yes or No automatically.',
+    gtaHow3Title: 'Eliminate animals that don’t match',
+    gtaHow3Body: 'Tap any animal card to flip it face-down and cross it off your board. Tap it again anytime to restore it.',
+    gtaHow4Title: 'Be the first to guess right',
+    gtaHow4Body: 'When you think you know their animal, tap Make a Guess and pick the card. A right guess wins — a wrong guess loses!',
+    // Rejoin & Errors
+    gtaRejoinTitle: 'Active match in progress',
+    gtaRejoinBtn: 'Rejoin Match',
+    gtaDismissRejoin: 'Dismiss',
+    gtaErrRoomFull: 'This room already has 2 players. No third player can join.',
+    gtaErrGameStarted: 'This 2-player match has already started.',
+    gtaErrRoomNotFound: 'Room not found or already closed.',
+    // Lobby
+    gtaLobbyTitle: '2-Player Lobby',
+    gtaWaitingOpponent: 'Waiting for your friend to join with the code...',
+    gtaReadyToStart: 'Both players are in! Tap Start when ready.',
+    gtaWaitingHostStart: 'Waiting for the host to start the match...',
+    gtaStartMatch: 'Start Match',
+    gtaPlayersSlots: 'Players',
+    gtaVoiceOptionalHint: 'Optional voice chat — works great with or without a mic.',
+    gtaEnableVoice: 'Enable Voice',
+    gtaVoiceOff: 'Voice Off',
+    // Picking Secret
+    gtaPickTitle: 'Pick Your Secret Animal',
+    gtaPickSub: 'Tap any animal below to choose it secretly, then confirm.',
+    gtaConfirmPick: 'Lock In My Animal',
+    gtaSelectedLabel: 'Selected',
+    gtaWaitingOpponentPick: 'Secret locked in! Waiting for opponent to pick their animal...',
+    // Active Play
+    gtaYourTurn: 'Your Turn',
+    gtaOpponentTurn: "Opponent's Turn",
+    gtaYourSecret: 'Your Secret',
+    gtaRemaining: 'Left',
+    gtaAskHeading: 'Ask a Trait Question (once per category each turn)',
+    gtaEndTurn: 'End Turn',
+    gtaMakeGuess: 'Make a Guess',
+    gtaCancelGuess: 'Cancel Guess',
+    gtaGuessModeHint: 'Tap the animal card you want to guess!',
+    gtaTapToFlipHint: 'Tap cards to flip face-down / restore',
+    gtaHistoryTitle: 'Q&A History',
+    gtaNoHistory: 'No questions asked yet. Pick a category below to start!',
+    gtaYes: 'Yes',
+    gtaNo: 'No',
+    gtaYouAsked: 'You',
+    gtaOpponentAsked: 'Opponent',
+    gtaGuessedLabel: 'Guessed',
+    gtaConfirmGuessTitle: 'Final Guess?',
+    gtaConfirmGuessDesc: 'A correct guess wins immediately, but a wrong guess loses the match!',
+    gtaConfirmGuessBtn: 'Yes, Guess This Animal',
+    gtaCancel: 'Cancel',
+    gtaExitBtn: 'Exit',
+    gtaExitTitle: 'Leave this match?',
+    gtaExitDesc: 'You can rejoin later with the room code if your friend stays, or end the game now.',
+    gtaExitConfirm: 'Leave Match',
+    // Finished
+    gtaYouWon: 'You Won!',
+    gtaYouLost: 'You Lost!',
+    gtaWonSub: 'Sharp deduction — you uncovered their animal first!',
+    gtaLostSub: 'Better luck next round — see both secret animals below.',
+    gtaYourAnimalWas: 'Your Animal',
+    gtaOpponentAnimalWas: "Opponent's Animal",
+    gtaPlayAgain: 'Play again',
+    gtaWaitingPlayAgain: 'Starting new round...',
+    // Question Categories
+    cat_color: 'Color',
+    cat_home: 'Home',
+    cat_legs: 'Legs',
+    cat_bodyCovering: 'Body Covering',
+    cat_features: 'Features',
+    cat_pattern: 'Pattern',
+    // Trait Options
+    opt_Red: 'Red',
+    opt_Orange: 'Orange',
+    opt_Yellowish: 'Yellowish',
+    opt_Gray: 'Gray',
+    opt_Brown: 'Brown',
+    opt_Green: 'Green',
+    'opt_Black and White': 'Black and White',
+    opt_Water: 'Water',
+    opt_Land: 'Land',
+    opt_Air: 'Air',
+    'opt_Land and Water': 'Land and Water',
+    'opt_No legs': 'No legs',
+    opt_2: '2 legs',
+    opt_4: '4 legs',
+    'opt_6+': '6+ legs',
+    opt_Fur: 'Fur',
+    'opt_Hard shell': 'Hard shell',
+    opt_Feathers: 'Feathers',
+    'opt_Smooth/Scales': 'Smooth / Scales',
+    'opt_Horns/Antlers': 'Horns / Antlers',
+    'opt_Visible ears': 'Visible ears',
+    opt_Tusks: 'Tusks',
+    'opt_Fins/Flippers': 'Fins / Flippers',
+    'opt_Visible tail': 'Visible tail',
+    opt_Stripes: 'Stripes',
+    'opt_Spots/Patches': 'Spots / Patches',
+    opt_Plain: 'Plain',
   },
   hi: {
     appTitle: 'वर्ड बैटल',
@@ -226,9 +349,178 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     // Transport info
     modeLocalWs: 'लाइव रूम सर्वर',
     modeFirebaseRtdb: 'Firebase Firestore',
+    // Game Hub
+    hubBrand: 'पार्टी आर्केड',
+    hubTitle: 'गेम चुनें',
+    hubSubtitle: 'दोस्तों के साथ लाइव खेलें — नीचे से अपना पसंदीदा गेम चुनें।',
+    hubSignInHint: 'लाइव मल्टीप्लेयर रूम बनाने या जॉइन करने के लिए Google से साइन इन करें।',
+    playNow: 'अभी खेलें',
+    backToHub: 'सभी गेम्स पर जाएँ',
+    wbCardBadge: '3–10 खिलाड़ी · पार्टी',
+    wbCardBadgeUpdated: '2–10 खिलाड़ी · सोशल डिडक्शन',
+    gtaTitle: 'गेस द एनिमल',
+    gtaDesc: 'हाँ/ना वाले सवाल पूछकर पता लगाएँ कि आपके दोस्त ने कौन-सा जानवर चुना है, और उनसे पहले सही अनुमान लगाएँ',
+    gtaCardBadge: '2 खिलाड़ी · डिडक्शन',
+    // Guess the Animal Menu & How To Play
+    gtaPlayWithFriend: 'दोस्त के साथ खेलें',
+    gtaCreateRoom: '2-खिलाड़ी रूम बनाएँ',
+    gtaJoinRoom: 'दोस्त का रूम जॉइन करें',
+    gtaRoomCodePlaceholder: '5-अक्षर का कोड',
+    gtaJoinBtn: 'मैच जॉइन करें',
+    gtaBack: 'वापस',
+    gtaStepOf: 'चरण',
+    gtaNext: 'आगे',
+    gtaOk: 'ठीक है',
+    gtaHow1Title: 'अपना जानवर चुनें',
+    gtaHow1Body: 'मैच शुरू होते ही बोर्ड के 30 जानवरों में से कोई 1 गुप्त रूप से चुनें। आपका दोस्त इसे नहीं देख सकता।',
+    gtaHow2Title: 'खासियत जानने के लिए सवाल पूछें',
+    gtaHow2Body: 'अपनी बारी पर कोई कैटेगरी और विकल्प चुनें — गेम अपने आप दोस्त के जानवर के हिसाब से हाँ या ना में जवाब देगा।',
+    gtaHow3Title: 'मेल न खाने वाले जानवर हटाएँ',
+    gtaHow3Body: 'किसी भी कार्ड को पलटकर छुपाने के लिए टैप करें। दोबारा टैप करके उसे वापस ला सकते हैं।',
+    gtaHow4Title: 'सबसे पहले सही नाम बताएँ',
+    gtaHow4Body: 'जब आपको पक्का लगे, तो "अनुमान लगाएँ" दबाकर जानवर चुनें। सही अनुमान से जीत और गलत से हार होती है!',
+    // Rejoin & Errors
+    gtaRejoinTitle: 'आपका मैच अभी चल रहा है',
+    gtaRejoinBtn: 'दोबारा जुड़ें',
+    gtaDismissRejoin: 'हटाएँ',
+    gtaErrRoomFull: 'इस रूम में पहले से 2 खिलाड़ी हैं। तीसरा खिलाड़ी नहीं जुड़ सकता।',
+    gtaErrGameStarted: 'यह 2-खिलाड़ी मैच पहले ही शुरू हो चुका है।',
+    gtaErrRoomNotFound: 'रूम नहीं मिला या बंद हो चुका है।',
+    // Lobby
+    gtaLobbyTitle: '2-खिलाड़ी लॉबी',
+    gtaWaitingOpponent: 'कोड के ज़रिए आपके दोस्त के जुड़ने का इंतज़ार है...',
+    gtaReadyToStart: 'दोनों खिलाड़ी जुड़ गए हैं! शुरू करने के लिए टैप करें।',
+    gtaWaitingHostStart: 'होस्ट के मैच शुरू करने का इंतज़ार है...',
+    gtaStartMatch: 'मैच शुरू करें',
+    gtaPlayersSlots: 'खिलाड़ी',
+    gtaVoiceOptionalHint: 'वैकल्पिक वॉइस चैट — बिना माइक के भी आसानी से खेलें।',
+    gtaEnableVoice: 'वॉइस चालू करें',
+    gtaVoiceOff: 'वॉइस बंद',
+    // Picking Secret
+    gtaPickTitle: 'अपना गुप्त जानवर चुनें',
+    gtaPickSub: 'नीचे किसी भी जानवर पर टैप करके उसे गुप्त चुनें और पक्का करें।',
+    gtaConfirmPick: 'मेरा जानवर पक्का करें',
+    gtaSelectedLabel: 'चयनित',
+    gtaWaitingOpponentPick: 'आपका जानवर लॉक हो गया! दोस्त के चुनने का इंतज़ार है...',
+    // Active Play
+    gtaYourTurn: 'आपकी बारी',
+    gtaOpponentTurn: 'दोस्त की बारी',
+    gtaYourSecret: 'आपका जानवर',
+    gtaRemaining: 'बाकी',
+    gtaAskHeading: 'सवाल पूछें (हर बारी में एक कैटेगरी से एक बार)',
+    gtaEndTurn: 'बारी समाप्त करें',
+    gtaMakeGuess: 'अनुमान लगाएँ',
+    gtaCancelGuess: 'रद्द करें',
+    gtaGuessModeHint: 'जिस जानवर का अनुमान लगाना है, उस कार्ड पर टैप करें!',
+    gtaTapToFlipHint: 'कार्ड पलटने या वापस लाने के लिए टैप करें',
+    gtaHistoryTitle: 'सवाल-जवाब इतिहास',
+    gtaNoHistory: 'अभी कोई सवाल नहीं पूछा गया है। शुरू करने के लिए नीचे से कैटेगरी चुनें!',
+    gtaYes: 'हाँ',
+    gtaNo: 'ना',
+    gtaYouAsked: 'आप',
+    gtaOpponentAsked: 'दोस्त',
+    gtaGuessedLabel: 'अनुमान',
+    gtaConfirmGuessTitle: 'क्या यही आपका अंतिम अनुमान है?',
+    gtaConfirmGuessDesc: 'सही अनुमान पर आप तुरंत जीत जाएँगे, लेकिन गलत अनुमान पर मैच हार जाएँगे!',
+    gtaConfirmGuessBtn: 'हाँ, यही जानवर है',
+    gtaCancel: 'रद्द करें',
+    gtaExitBtn: 'बाहर निकलें',
+    gtaExitTitle: 'क्या मैच से बाहर निकलना है?',
+    gtaExitDesc: 'यदि आपका दोस्त रूम में है तो आप कोड से दोबारा जुड़ सकते हैं।',
+    gtaExitConfirm: 'मैच छोड़ें',
+    // Finished
+    gtaYouWon: 'आप जीत गए!',
+    gtaYouLost: 'आप हार गए!',
+    gtaWonSub: 'शानदार अनुमान — आपने पहले ही सही जानवर पहचान लिया!',
+    gtaLostSub: 'अगली बार बेहतर किस्मत — नीचे दोनों के गुप्त जानवर देखें।',
+    gtaYourAnimalWas: 'आपका जानवर',
+    gtaOpponentAnimalWas: 'दोस्त का जानवर',
+    gtaPlayAgain: 'फिर से खेलें',
+    gtaWaitingPlayAgain: 'नया राउंड शुरू हो रहा है...',
+    // Question Categories
+    cat_color: 'रंग',
+    cat_home: 'निवास',
+    cat_legs: 'पैर',
+    cat_bodyCovering: 'शरीर की बनावट',
+    cat_features: 'खास अंग',
+    cat_pattern: 'पैटर्न',
+    // Trait Options
+    opt_Red: 'लाल',
+    opt_Orange: 'नारंगी',
+    opt_Yellowish: 'पीलापन लिए',
+    opt_Gray: 'स्लेटी (ग्रे)',
+    opt_Brown: 'भूरा',
+    opt_Green: 'हरा',
+    'opt_Black and White': 'काला और सफ़ेद',
+    opt_Water: 'पानी',
+    opt_Land: 'ज़मीन',
+    opt_Air: 'हवा / आकाश',
+    'opt_Land and Water': 'ज़मीन और पानी',
+    'opt_No legs': 'बिना पैर',
+    opt_2: '2 पैर',
+    opt_4: '4 पैर',
+    'opt_6+': '6+ पैर',
+    opt_Fur: 'फर (बाल)',
+    'opt_Hard shell': 'कड़ा खोल',
+    opt_Feathers: 'पंख',
+    'opt_Smooth/Scales': 'चिकनी त्वचा / शल्क',
+    'opt_Horns/Antlers': 'सींग',
+    'opt_Visible ears': 'दिखने वाले कान',
+    opt_Tusks: 'लंबे दाँत (टस्क)',
+    'opt_Fins/Flippers': 'फिन / फ्लिपर',
+    'opt_Visible tail': 'दिखने वाली पूँछ',
+    opt_Stripes: 'धारियाँ',
+    'opt_Spots/Patches': 'धब्बे / चकत्ते',
+    opt_Plain: 'सादा',
   },
 };
 
 export function t(lang: Language, key: string): string {
   return TRANSLATIONS[lang]?.[key] ?? TRANSLATIONS.en[key] ?? key;
+}
+
+export function formatTraitQuestion(
+  lang: Language,
+  category: string,
+  option: string
+): string {
+  const optLabel = t(lang, `opt_${option}`);
+  if (lang === 'hi') {
+    switch (category) {
+      case 'color':
+        return `क्या यह मुख्य रूप से ${optLabel} रंग का है?`;
+      case 'home':
+        return `क्या यह ${optLabel} में रहता है?`;
+      case 'legs':
+        return option === 'No legs' ? 'क्या इसके पैर नहीं हैं?' : `क्या इसके ${optLabel} हैं?`;
+      case 'bodyCovering':
+        return `क्या इसके शरीर पर ${optLabel} हैं?`;
+      case 'features':
+        return `क्या इसके ${optLabel} हैं?`;
+      case 'pattern':
+        return option === 'Plain'
+          ? 'क्या इसका शरीर सादा (बिना धारी/धब्बे) है?'
+          : `क्या इसके शरीर पर ${optLabel} हैं?`;
+      default:
+        return `${optLabel}?`;
+    }
+  }
+  switch (category) {
+    case 'color':
+      return `Is it mainly ${optLabel}?`;
+    case 'home':
+      return `Does it live in ${optLabel}?`;
+    case 'legs':
+      return option === 'No legs' ? 'Does it have no legs?' : `Does it have ${optLabel}?`;
+    case 'bodyCovering':
+      return `Does it have ${optLabel.toLowerCase()}?`;
+    case 'features':
+      return `Does it have ${optLabel.toLowerCase()}?`;
+    case 'pattern':
+      return option === 'Plain'
+        ? 'Does it have a plain pattern?'
+        : `Does it have ${optLabel.toLowerCase()}?`;
+    default:
+      return `${optLabel}?`;
+  }
 }
