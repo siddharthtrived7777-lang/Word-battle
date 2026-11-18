@@ -4,7 +4,26 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { RoomState, Player, SignalPayload } from './src/types/game.ts';
+import type { RoomState, Player, SignalPayload, PlayerAvatar } from './src/types/game.ts';
+import type {
+  CardActionPayload,
+  CardGameId,
+  CardGameSettingsMap,
+} from './src/types/cardGames.ts';
+import {
+  autoResolveTimedOutTurn,
+  createEmptySatyoLanes,
+  createInitialCardRoom,
+  getPlayerLimits,
+  serializeCardRoomForPlayer,
+  startCardGame,
+  validateAndApplyCardAction,
+} from './server/cardGamesEngine.ts';
+import type { CardRoomInternal } from './server/cardGamesEngine.ts';
+import {
+  FIREBASE_PROJECT_ID,
+  verifyFirebaseBearerToken,
+} from './server/firebaseAuthVerify.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +48,11 @@ const roomSockets = new Map<string, Map<string, WebSocket>>();
 const roomSseClients = new Map<string, Map<string, Response>>();
 // Grace timers for SSE reconnects before treating a drop as permanent disconnect
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
+
+// Authoritative Playing Cards rooms (per-player private hand isolation)
+const cardRooms = new Map<string, CardRoomInternal>();
+const cardRoomSseClients = new Map<string, Map<string, Response>>();
+const cardDisconnectTimers = new Map<string, NodeJS.Timeout>();
 
 interface ClientMeta {
   roomCode: string;
@@ -181,6 +205,134 @@ function applyRoomUpdate(
     if (patch.players !== undefined) room.players = patch.players;
     if (patch.hostId !== undefined) room.hostId = patch.hostId;
   }
+}
+
+// ---------------- Playing Cards Helpers ----------------
+function clearCardDisconnectTimer(roomCode: string, playerId: string) {
+  const key = timerKey(roomCode, playerId);
+  const existing = cardDisconnectTimers.get(key);
+  if (existing) {
+    clearTimeout(existing);
+    cardDisconnectTimers.delete(key);
+  }
+}
+
+function broadcastCardRoom(roomCode: string) {
+  const room = cardRooms.get(roomCode);
+  if (!room) return;
+
+  const ssePeers = cardRoomSseClients.get(roomCode);
+  if (!ssePeers) return;
+
+  for (const [viewerUid, res] of ssePeers.entries()) {
+    if (!res.writableEnded) {
+      const personalized = serializeCardRoomForPlayer(room, viewerUid);
+      res.write(`event: card_room_state\ndata: ${JSON.stringify(personalized)}\n\n`);
+    }
+  }
+}
+
+function deliverCardSignal(roomCode: string, signal: SignalPayload) {
+  const ssePeers = cardRoomSseClients.get(roomCode);
+  const targetRes = ssePeers?.get(signal.to);
+  if (targetRes && !targetRes.writableEnded) {
+    targetRes.write(`event: card_signal\ndata: ${JSON.stringify(signal)}\n\n`);
+  }
+}
+
+function handleCardPlayerLeave(roomCode: string, playerId: string, permanent: boolean) {
+  clearCardDisconnectTimer(roomCode, playerId);
+
+  if (permanent) {
+    const ssePeers = cardRoomSseClients.get(roomCode);
+    if (ssePeers) {
+      ssePeers.delete(playerId);
+      if (ssePeers.size === 0) {
+        cardRoomSseClients.delete(roomCode);
+      }
+    }
+  }
+
+  const room = cardRooms.get(roomCode);
+  if (!room) return;
+
+  if (!permanent && room.phase === 'playing') {
+    if (room.players[playerId]) {
+      room.players[playerId].connected = false;
+      room.updatedAt = Date.now();
+    }
+    broadcastCardRoom(roomCode);
+    return;
+  }
+
+  delete room.players[playerId];
+  delete room.hands[playerId];
+  room.playerOrder = room.playerOrder.filter((id) => id !== playerId);
+
+  const remaining = Object.values(room.players).sort(
+    (a, b) => a.joinedAt - b.joinedAt || a.id.localeCompare(b.id)
+  );
+
+  if (remaining.length === 0) {
+    cardRooms.delete(roomCode);
+    cardRoomSseClients.delete(roomCode);
+    return;
+  }
+
+  if (room.hostId === playerId || !room.players[room.hostId]) {
+    const nextHost = remaining[0];
+    room.hostId = nextHost.id;
+    for (const p of remaining) {
+      p.isHost = p.id === nextHost.id;
+    }
+  }
+
+  if (room.phase === 'playing' && room.playerOrder.length < 2) {
+    room.phase = 'lobby';
+    room.turnDeadlineAt = null;
+    room.outcome = null;
+    room.deck = [];
+    room.discardUno = [];
+    room.stackMongoose = [];
+    room.satyoLanes = createEmptySatyoLanes();
+    for (const p of remaining) {
+      p.ready = false;
+      p.safe = false;
+      p.saidUno = false;
+      room.hands[p.id] = [];
+    }
+  } else if (room.turnIndex >= room.playerOrder.length) {
+    room.turnIndex = 0;
+  }
+
+  room.updatedAt = Date.now();
+  broadcastCardRoom(roomCode);
+}
+
+async function resolveCardCallerUid(
+  req: express.Request,
+  fallbackPlayerId?: string
+): Promise<string> {
+  const authHeader = String(req.headers.authorization || '');
+  const bearerToken = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : '';
+  const queryToken = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  const token = bearerToken || queryToken;
+
+  if (FIREBASE_PROJECT_ID) {
+    const caller = await verifyFirebaseBearerToken(token);
+    if (!caller?.uid) {
+      throw new Error('AUTH_REQUIRED');
+    }
+    return caller.uid;
+  }
+
+  const candidate = String(fallbackPlayerId || '').trim();
+  if (!candidate) {
+    throw new Error('AUTH_REQUIRED');
+  }
+  return candidate;
 }
 
 async function startServer() {
@@ -396,6 +548,408 @@ async function startServer() {
     }
     res.json({ ok: true });
   });
+
+  // ---------------- Playing Cards Authoritative Endpoints ----------------
+  app.post('/api/card-rooms', async (req, res) => {
+    try {
+      const { code: rawCode, selectedGame, player } = req.body as {
+        code?: string;
+        selectedGame?: CardGameId;
+        player?: { id?: string; name?: string; avatar?: PlayerAvatar };
+      };
+      const uid = await resolveCardCallerUid(req, player?.id);
+      const code = String(rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+      if (code.length !== 5 || !player?.name || !player?.avatar) {
+        res.status(400).json({ code: 'INVALID_REQUEST' });
+        return;
+      }
+      if (cardRooms.has(code)) {
+        res.status(409).json({ code: 'ROOM_EXISTS' });
+        return;
+      }
+
+      const validGames: CardGameId[] = ['uno', 'satyo', 'mongoose', 'gadha_chor'];
+      const gameId: CardGameId =
+        selectedGame && validGames.includes(selectedGame) ? selectedGame : 'uno';
+
+      const room = createInitialCardRoom(
+        code,
+        { id: uid, name: player.name.trim().slice(0, 20) || 'Player', avatar: player.avatar },
+        gameId
+      );
+      cardRooms.set(code, room);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(codeErr.includes('AUTH') ? 401 : 400).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/join', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { player } = req.body as {
+        player?: { id?: string; name?: string; avatar?: PlayerAvatar };
+      };
+      const uid = await resolveCardCallerUid(req, player?.id);
+      const room = cardRooms.get(code);
+      if (!room) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+
+      const existing = room.players[uid];
+      const limits = getPlayerLimits(room.selectedGame);
+      if (!existing) {
+        if (room.phase !== 'lobby') {
+          res.status(409).json({ code: 'GAME_IN_PROGRESS' });
+          return;
+        }
+        if (Object.keys(room.players).length >= limits.max) {
+          res.status(409).json({ code: 'ROOM_FULL' });
+          return;
+        }
+        if (!player?.name || !player?.avatar) {
+          res.status(400).json({ code: 'INVALID_REQUEST' });
+          return;
+        }
+        room.players[uid] = {
+          id: uid,
+          name: player.name.trim().slice(0, 20) || 'Player',
+          avatar: player.avatar,
+          isHost: room.hostId === uid,
+          ready: false,
+          connected: true,
+          isMuted: false,
+          joinedAt: Date.now(),
+          score: 0,
+          safe: false,
+          saidUno: false,
+        };
+        if (!room.playerOrder.includes(uid)) {
+          room.playerOrder.push(uid);
+        }
+      } else {
+        existing.connected = true;
+        if (player?.name) existing.name = player.name.trim().slice(0, 20) || existing.name;
+        if (player?.avatar) existing.avatar = player.avatar;
+      }
+
+      clearCardDisconnectTimer(code, uid);
+      room.updatedAt = Date.now();
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(codeErr.includes('AUTH') ? 401 : 400).json({ code: codeErr });
+    }
+  });
+
+  app.get('/api/card-rooms/:code', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const uid = await resolveCardCallerUid(
+        req,
+        typeof req.query.playerId === 'string' ? req.query.playerId : undefined
+      );
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(401).json({ code: codeErr });
+    }
+  });
+
+  app.get('/api/card-rooms/:code/events', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const uid = await resolveCardCallerUid(
+        req,
+        typeof req.query.playerId === 'string' ? req.query.playerId : undefined
+      );
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      clearCardDisconnectTimer(code, uid);
+      room.players[uid].connected = true;
+
+      let ssePeers = cardRoomSseClients.get(code);
+      if (!ssePeers) {
+        ssePeers = new Map();
+        cardRoomSseClients.set(code, ssePeers);
+      }
+      ssePeers.set(uid, res);
+
+      // Push caller-only state immediately and inform peers of connected status
+      res.write(
+        `event: card_room_state\ndata: ${JSON.stringify(serializeCardRoomForPlayer(room, uid))}\n\n`
+      );
+      broadcastCardRoom(code);
+
+      const keepAlive = setInterval(() => {
+        if (!res.writableEnded) {
+          res.write(': keepalive\n\n');
+        }
+      }, 15000);
+
+      req.on('close', () => {
+        clearInterval(keepAlive);
+        const currentPeers = cardRoomSseClients.get(code);
+        if (currentPeers && currentPeers.get(uid) === res) {
+          currentPeers.delete(uid);
+        }
+
+        const key = timerKey(code, uid);
+        clearCardDisconnectTimer(code, uid);
+        const timeout = setTimeout(() => {
+          cardDisconnectTimers.delete(key);
+          const stillSse = cardRoomSseClients.get(code)?.has(uid);
+          if (!stillSse) {
+            const currentRoom = cardRooms.get(code);
+            if (!currentRoom) return;
+            handleCardPlayerLeave(code, uid, currentRoom.phase === 'lobby');
+          }
+        }, 8000);
+        cardDisconnectTimers.set(key, timeout);
+      });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(401).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/ready', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { ready, playerId } = req.body as { ready?: boolean; playerId?: string };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      room.players[uid].ready = Boolean(ready);
+      room.updatedAt = Date.now();
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(401).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/config', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { selectedGame, settings, playerId } = req.body as {
+        selectedGame?: CardGameId;
+        settings?: Partial<CardGameSettingsMap>;
+        playerId?: string;
+      };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (room.hostId !== uid) {
+        res.status(403).json({ code: 'HOST_ONLY' });
+        return;
+      }
+      if (room.phase !== 'lobby') {
+        res.status(409).json({ code: 'GAME_ALREADY_STARTED' });
+        return;
+      }
+
+      if (selectedGame && ['uno', 'satyo', 'mongoose', 'gadha_chor'].includes(selectedGame)) {
+        room.selectedGame = selectedGame;
+      }
+      if (settings) {
+        if (settings.uno) room.settings.uno = { ...room.settings.uno, ...settings.uno };
+        if (settings.satyo) room.settings.satyo = { ...room.settings.satyo, ...settings.satyo };
+        if (settings.mongoose) {
+          room.settings.mongoose = { ...room.settings.mongoose, ...settings.mongoose };
+        }
+        if (settings.gadha_chor) {
+          room.settings.gadha_chor = { ...room.settings.gadha_chor, ...settings.gadha_chor };
+        }
+      }
+      room.updatedAt = Date.now();
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'AUTH_REQUIRED';
+      res.status(401).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/start', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { playerId } = req.body as { playerId?: string };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (room.hostId !== uid) {
+        res.status(403).json({ code: 'HOST_ONLY' });
+        return;
+      }
+      startCardGame(room);
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'START_FAILED';
+      res.status(400).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/action', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { action, playerId } = req.body as {
+        action?: CardActionPayload;
+        playerId?: string;
+      };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (!action || typeof action.type !== 'string') {
+        res.status(400).json({ code: 'INVALID_ACTION' });
+        return;
+      }
+      validateAndApplyCardAction(room, uid, action);
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'ACTION_REJECTED';
+      res.status(400).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/play-again', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { mode, playerId } = req.body as {
+        mode?: 'lobby' | 'redeal';
+        playerId?: string;
+      };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (!room || !room.players[uid]) {
+        res.status(404).json({ code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (room.hostId !== uid) {
+        res.status(403).json({ code: 'HOST_ONLY' });
+        return;
+      }
+
+      if (mode === 'redeal') {
+        startCardGame(room);
+      } else {
+        room.phase = 'lobby';
+        room.turnDeadlineAt = null;
+        room.outcome = null;
+        room.deck = [];
+        room.discardUno = [];
+        room.stackMongoose = [];
+        room.satyoLanes = createEmptySatyoLanes();
+        for (const p of Object.values(room.players)) {
+          p.ready = false;
+          p.safe = false;
+          p.saidUno = false;
+          p.lastActionText = undefined;
+          room.hands[p.id] = [];
+        }
+        room.updatedAt = Date.now();
+      }
+      broadcastCardRoom(code);
+      res.json({ state: serializeCardRoomForPlayer(room, uid) });
+    } catch (err) {
+      const codeErr = err instanceof Error ? err.message : 'RESET_FAILED';
+      res.status(400).json({ code: codeErr });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/mute', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { isMuted, playerId } = req.body as { isMuted?: boolean; playerId?: string };
+      const uid = await resolveCardCallerUid(req, playerId);
+      const room = cardRooms.get(code);
+      if (room && room.players[uid]) {
+        room.players[uid].isMuted = Boolean(isMuted);
+        room.updatedAt = Date.now();
+        broadcastCardRoom(code);
+      }
+      res.json({ ok: true });
+    } catch {
+      res.status(401).json({ code: 'AUTH_REQUIRED' });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/signal', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { signal, playerId } = req.body as {
+        signal?: SignalPayload;
+        playerId?: string;
+      };
+      const uid = await resolveCardCallerUid(req, playerId);
+      if (signal) {
+        deliverCardSignal(code, { ...signal, from: uid });
+      }
+      res.json({ ok: true });
+    } catch {
+      res.status(401).json({ code: 'AUTH_REQUIRED' });
+    }
+  });
+
+  app.post('/api/card-rooms/:code/leave', async (req, res) => {
+    try {
+      const code = String(req.params.code || '').toUpperCase().trim();
+      const { playerId } = req.body as { playerId?: string };
+      const uid = await resolveCardCallerUid(req, playerId);
+      handleCardPlayerLeave(code, uid, true);
+      res.json({ ok: true });
+    } catch {
+      res.json({ ok: true });
+    }
+  });
+
+  // Periodic turn-timer check + stale card room sweep
+  setInterval(() => {
+    const now = Date.now();
+    for (const [code, room] of cardRooms.entries()) {
+      if (now - room.updatedAt > 6 * 60 * 60 * 1000) {
+        cardRooms.delete(code);
+        cardRoomSseClients.delete(code);
+        continue;
+      }
+      if (room.phase === 'playing' && autoResolveTimedOutTurn(room)) {
+        broadcastCardRoom(code);
+      }
+    }
+  }, 1000);
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });

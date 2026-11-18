@@ -86,6 +86,28 @@ class SoundEffects {
     this.playTone(783.99, 0.14, 'triangle', 0.08, 0.18);
     this.playTone(1046.5, 0.32, 'triangle', 0.08, 0.28);
   }
+
+  cardPlay() {
+    this.playTone(320, 0.045, 'triangle', 0.05, 0);
+    this.playTone(460, 0.05, 'sine', 0.04, 0.025);
+  }
+
+  cardFlip() {
+    this.playTone(280, 0.04, 'sine', 0.04, 0);
+    this.playTone(420, 0.045, 'triangle', 0.04, 0.02);
+  }
+
+  unoCall() {
+    this.playTone(659.25, 0.09, 'triangle', 0.07, 0);
+    this.playTone(880, 0.14, 'triangle', 0.07, 0.08);
+  }
+
+  cardWin() {
+    this.playTone(523.25, 0.11, 'triangle', 0.06, 0);
+    this.playTone(659.25, 0.11, 'triangle', 0.06, 0.08);
+    this.playTone(783.99, 0.13, 'triangle', 0.07, 0.16);
+    this.playTone(1046.5, 0.26, 'triangle', 0.07, 0.24);
+  }
 }
 
 export const soundFx = new SoundEffects();

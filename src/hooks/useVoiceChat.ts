@@ -9,16 +9,15 @@ interface PeerEntry {
   audioEl: HTMLAudioElement;
   pendingIce: RTCIceCandidateInit[];
   remoteDescSet: boolean;
+  makingOffer: boolean;
   analyser?: AnalyserNode;
   source?: MediaStreamAudioSourceNode;
 }
 
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
 
 export interface VoiceTransportPlayer {
   id: string;
@@ -44,15 +43,40 @@ export function useVoiceChat(
   const [micStatus, setMicStatus] = useState<MicPermissionState>('idle');
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [speakingIds, setSpeakingIds] = useState<Record<string, boolean>>({});
+  const [peerStates, setPeerStates] = useState<Record<string, RTCPeerConnectionState>>({});
+  const [localMutedPeers, setLocalMutedPeers] = useState<Record<string, boolean>>({});
+  const [turnConfigured, setTurnConfigured] = useState<boolean>(false);
+  const [reconnectNonce, setReconnectNonce] = useState<number>(0);
 
+  const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const localAnalyserRef = useRef<AnalyserNode | null>(null);
   const peersRef = useRef<Map<string, PeerEntry>>(new Map());
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
+  const localMutedPeersRef = useRef(localMutedPeers);
+  localMutedPeersRef.current = localMutedPeers;
   const adapterRef = useRef<VoiceTransportAdapter>(adapter ?? DEFAULT_ADAPTER);
   adapterRef.current = adapter ?? DEFAULT_ADAPTER;
+
+  // Fetch STUN/TURN configuration from backend once
+  useEffect(() => {
+    let active = true;
+    fetch('/api/ice-servers')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { iceServers?: RTCIceServer[]; turnConfigured?: boolean } | null) => {
+        if (!active || !data?.iceServers?.length) return;
+        iceServersRef.current = data.iceServers;
+        setTurnConfigured(Boolean(data.turnConfigured));
+      })
+      .catch(() => {
+        // Keep default Google STUN servers
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const ensureAudioContext = useCallback(() => {
     if (!audioCtxRef.current && typeof window !== 'undefined') {
@@ -113,11 +137,14 @@ export function useVoiceChat(
         localAnalyserRef.current = analyser;
       }
 
-      // Attach local tracks to any existing peer connections
+      // Attach or replace local audio tracks on existing peer connections
       for (const [, entry] of peersRef.current.entries()) {
         const senders = entry.pc.getSenders();
         for (const track of stream.getAudioTracks()) {
-          if (!senders.some((s) => s.track === track)) {
+          const audioSender = senders.find((s) => s.track?.kind === 'audio');
+          if (audioSender) {
+            audioSender.replaceTrack(track).catch(() => {});
+          } else if (!senders.some((s) => s.track === track)) {
             entry.pc.addTrack(track, stream);
           }
         }
@@ -150,14 +177,27 @@ export function useVoiceChat(
     });
   }, [inRoom, myId]);
 
+  const togglePeerMute = useCallback((peerId: string) => {
+    setLocalMutedPeers((prev) => {
+      const nextMuted = !prev[peerId];
+      const next = { ...prev, [peerId]: nextMuted };
+      const entry = peersRef.current.get(peerId);
+      if (entry) {
+        entry.audioEl.muted = nextMuted;
+      }
+      return next;
+    });
+  }, []);
+
   const createPeerConnection = useCallback(
     (peerId: string): PeerEntry => {
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
-      const pc = new RTCPeerConnection(RTC_CONFIG);
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
       const audioEl = document.createElement('audio');
       audioEl.autoplay = true;
+      audioEl.muted = Boolean(localMutedPeersRef.current[peerId]);
       audioEl.setAttribute('playsinline', 'true');
 
       const entry: PeerEntry = {
@@ -165,6 +205,7 @@ export function useVoiceChat(
         audioEl,
         pendingIce: [],
         remoteDescSet: false,
+        makingOffer: false,
       };
 
       if (localStreamRef.current) {
@@ -186,10 +227,33 @@ export function useVoiceChat(
         }
       };
 
+      pc.onconnectionstatechange = () => {
+        setPeerStates((prev) => ({ ...prev, [peerId]: pc.connectionState }));
+        if (pc.connectionState === 'failed' && myId < peerId) {
+          try {
+            pc.restartIce();
+            pc.createOffer({ iceRestart: true, offerToReceiveAudio: true })
+              .then(async (offer) => {
+                await pc.setLocalDescription(offer);
+                await adapterRef.current.sendSignal({
+                  from: myId,
+                  to: peerId,
+                  type: 'offer',
+                  data: offer,
+                });
+              })
+              .catch(() => {});
+          } catch {
+            // Ignore ICE restart failure
+          }
+        }
+      };
+
       pc.ontrack = (event) => {
         const [remoteStream] = event.streams;
         if (!remoteStream) return;
         audioEl.srcObject = remoteStream;
+        audioEl.muted = Boolean(localMutedPeersRef.current[peerId]);
         audioEl.play().catch(() => {});
 
         const ctx = ensureAudioContext();
@@ -208,6 +272,7 @@ export function useVoiceChat(
       };
 
       peersRef.current.set(peerId, entry);
+      setPeerStates((prev) => ({ ...prev, [peerId]: pc.connectionState }));
       return entry;
     },
     [ensureAudioContext, myId]
@@ -218,9 +283,18 @@ export function useVoiceChat(
       if (signal.to !== myId || signal.from === myId) return;
       const entry = createPeerConnection(signal.from);
       const { pc } = entry;
+      const polite = myId > signal.from;
 
       try {
         if (signal.type === 'offer') {
+          const offerCollision = entry.makingOffer || pc.signalingState !== 'stable';
+          if (offerCollision && !polite) {
+            return;
+          }
+          if (offerCollision && polite) {
+            await pc.setLocalDescription({ type: 'rollback' });
+          }
+
           await pc.setRemoteDescription(
             new RTCSessionDescription(signal.data as RTCSessionDescriptionInit)
           );
@@ -264,6 +338,16 @@ export function useVoiceChat(
     [createPeerConnection, myId]
   );
 
+  const reconnectVoice = useCallback(() => {
+    for (const [, entry] of peersRef.current.entries()) {
+      entry.pc.close();
+      entry.audioEl.srcObject = null;
+    }
+    peersRef.current.clear();
+    setPeerStates({});
+    setReconnectNonce((n) => n + 1);
+  }, []);
+
   // Sync peer connections with active room players
   useEffect(() => {
     if (!inRoom || !players) {
@@ -272,6 +356,7 @@ export function useVoiceChat(
         entry.audioEl.srcObject = null;
       }
       peersRef.current.clear();
+      setPeerStates({});
       return;
     }
 
@@ -287,6 +372,11 @@ export function useVoiceChat(
         entry.pc.close();
         entry.audioEl.srcObject = null;
         peersRef.current.delete(peerId);
+        setPeerStates((prev) => {
+          const copy = { ...prev };
+          delete copy[peerId];
+          return copy;
+        });
       }
     }
 
@@ -295,6 +385,7 @@ export function useVoiceChat(
       if (!peersRef.current.has(peerId)) {
         const entry = createPeerConnection(peerId);
         if (myId < peerId) {
+          entry.makingOffer = true;
           entry.pc
             .createOffer({ offerToReceiveAudio: true })
             .then(async (offer) => {
@@ -306,11 +397,14 @@ export function useVoiceChat(
                 data: offer,
               });
             })
-            .catch(() => {});
+            .catch(() => {})
+            .finally(() => {
+              entry.makingOffer = false;
+            });
         }
       }
     }
-  }, [createPeerConnection, inRoom, myId, players]);
+  }, [createPeerConnection, inRoom, myId, players, reconnectNonce]);
 
   // Monitor audio levels for glowing speaking rings
   useEffect(() => {
@@ -339,7 +433,7 @@ export function useVoiceChat(
 
       // Check remote peers' audio levels
       for (const [peerId, entry] of peersRef.current.entries()) {
-        if (entry.analyser) {
+        if (entry.analyser && !localMutedPeersRef.current[peerId]) {
           entry.analyser.getByteTimeDomainData(dataArray);
           let sum = 0;
           for (let i = 0; i < dataArray.length; i++) {
@@ -373,9 +467,14 @@ export function useVoiceChat(
     micStatus,
     isMuted,
     speakingIds,
+    peerStates,
+    localMutedPeers,
+    turnConfigured,
     requestMicrophone,
     stopMicrophone,
     toggleMute,
+    togglePeerMute,
+    reconnectVoice,
     handleSignal,
   };
 }

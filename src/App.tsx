@@ -35,6 +35,7 @@ import {
   CharadesRoomState,
   CharadesTeamId,
 } from './types/charades';
+import { CardGameId, CardRoomClientState } from './types/cardGames';
 import { t } from './data/i18n';
 import {
   computeRoundOutcome,
@@ -54,6 +55,10 @@ import {
   charadesRoomService,
   saveActiveCharadesRoomCode,
 } from './services/charadesRoomService';
+import {
+  cardRoomService,
+  saveActiveCardRoomCode,
+} from './services/cardRoomService';
 import { useVoiceChat, VoiceTransportAdapter } from './hooks/useVoiceChat';
 import { useCharadesMedia } from './hooks/useCharadesMedia';
 import { soundFx } from './utils/soundFx';
@@ -74,10 +79,13 @@ import { GuessAnimalGameScreen } from './screens/GuessAnimalGameScreen';
 import { CharadesMenuScreen } from './screens/CharadesMenuScreen';
 import { CharadesLobbyScreen } from './screens/CharadesLobbyScreen';
 import { CharadesGameScreen } from './screens/CharadesGameScreen';
+import { PlayingCardsMenuScreen } from './screens/PlayingCardsMenuScreen';
+import { PlayingCardsLobbyScreen } from './screens/PlayingCardsLobbyScreen';
+import { PlayingCardsTableScreen } from './screens/PlayingCardsTableScreen';
 
 void FIREBASE_CONFIG;
 
-type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal' | 'charades';
+type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal' | 'charades' | 'playing_cards';
 
 function loadStoredProfile() {
   try {
@@ -135,8 +143,23 @@ export default function App() {
     }
   }, []);
 
+  const initialCardsCode = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get('cards') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    } catch {
+      return '';
+    }
+  }, []);
+
   const [activeGame, setActiveGame] = useState<ActiveHubSection>(() =>
-    initialCharadesCode ? 'charades' : initialJoinCode ? 'word_battle' : 'hub'
+    initialCardsCode
+      ? 'playing_cards'
+      : initialCharadesCode
+        ? 'charades'
+        : initialJoinCode
+          ? 'word_battle'
+          : 'hub'
   );
 
   // Word Battle State (preserved identically)
@@ -165,6 +188,14 @@ export default function App() {
     'create' | 'join' | 'rejoin' | null
   >(null);
 
+  // Playing Cards State
+  const [cardRoom, setCardRoom] = useState<CardRoomClientState | null>(null);
+  const [rejoinCardRoom, setRejoinCardRoom] = useState<CardRoomClientState | null>(null);
+  const [cardErrorMsg, setCardErrorMsg] = useState<string | null>(null);
+  const [cardLoadingAction, setCardLoadingAction] = useState<
+    'create' | 'join' | 'rejoin' | null
+  >(null);
+
   const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
 
   const roomRef = useRef<RoomState | null>(null);
@@ -189,6 +220,7 @@ export default function App() {
         roomTransport.cleanup();
         animalRoomService.cleanup();
         charadesRoomService.cleanup();
+        cardRoomService.cleanup();
         setRoom(null);
         setAnimalRoom(null);
         setMyAnimalSecretId(null);
@@ -196,6 +228,8 @@ export default function App() {
         setCharadesRoom(null);
         setMyPrivateMovie(null);
         setRejoinCharadesRoom(null);
+        setCardRoom(null);
+        setRejoinCardRoom(null);
       }
     });
     return () => unsub();
@@ -264,6 +298,25 @@ export default function App() {
     charadesRoom?.players
   );
 
+  // Live voice chat WebRTC mesh for Playing Cards
+  const cardsVoiceAdapter = useMemo<VoiceTransportAdapter>(
+    () => ({
+      sendSignal: (signal) => cardRoomService.sendSignal(signal),
+      updateMuteState: (playerId, muted) => cardRoomService.updateMuteState(playerId, muted),
+    }),
+    []
+  );
+
+  const cardsVoice = useVoiceChat(
+    myId,
+    Boolean(cardRoom),
+    cardRoom?.players,
+    cardsVoiceAdapter
+  );
+
+  const cardsVoiceSignalRef = useRef(cardsVoice.handleSignal);
+  cardsVoiceSignalRef.current = cardsVoice.handleSignal;
+
   // Discover active Guess the Animal room to offer rejoin after disconnect
   useEffect(() => {
     if (!firestoreEnabled || !authUser || animalRoom) return;
@@ -307,6 +360,28 @@ export default function App() {
       cancelled = true;
     };
   }, [activeGame, authUser, charadesRoom, firestoreEnabled]);
+
+  // Discover active Playing Cards room to offer rejoin after disconnect
+  useEffect(() => {
+    if (cardRoom || activeGame !== 'playing_cards') return;
+    if (firestoreEnabled && !authUser) return;
+
+    let cancelled = false;
+    cardRoomService
+      .findActiveRejoinRoom(myId)
+      .then((found) => {
+        if (!cancelled) {
+          setRejoinCardRoom(found);
+        }
+      })
+      .catch(() => {
+        // Ignore lookup error
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGame, authUser, cardRoom, firestoreEnabled, myId]);
 
   // Restore flipped card state when joining/rejoining a Guess the Animal room
   useEffect(() => {
@@ -407,6 +482,9 @@ export default function App() {
     if (charadesRoom) {
       await charadesRoomService.leaveRoom(charadesRoom.code, myId);
     }
+    if (cardRoom) {
+      await cardRoomService.leaveRoom(cardRoom.code, myId);
+    }
     charadesMedia.stopAllMedia();
     setRoom(null);
     setAnimalRoom(null);
@@ -415,6 +493,8 @@ export default function App() {
     setCharadesRoom(null);
     setMyPrivateMovie(null);
     setRejoinCharadesRoom(null);
+    setCardRoom(null);
+    setRejoinCardRoom(null);
     await signOutFirebase();
   };
 
@@ -997,6 +1077,96 @@ export default function App() {
     setCharadesErrorMsg(null);
   };
 
+  // ---------------- Playing Cards Handlers ----------------
+  const handleCreateCardRoom = async (selectedGame: CardGameId) => {
+    if (firestoreEnabled && !authUser) {
+      setCardErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    setCardErrorMsg(null);
+    setCardLoadingAction('create');
+    try {
+      const displayName = playerName.trim() || authUser?.displayName || 'Player';
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const code = generateRoomCode();
+        try {
+          await cardRoomService.createRoom(
+            code,
+            selectedGame,
+            { id: myId, name: displayName, avatar },
+            {
+              onState: (next) => setCardRoom(next),
+              onSignal: (sig) => cardsVoiceSignalRef.current(sig),
+              onError: (codeErr) => setCardErrorMsg(mapTransportError(codeErr)),
+            }
+          );
+          setRejoinCardRoom(null);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!(err instanceof Error && err.message === 'ROOM_EXISTS')) {
+            throw err;
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
+      await cardsVoice.requestMicrophone();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setCardErrorMsg(mapTransportError(msg));
+    } finally {
+      setCardLoadingAction(null);
+    }
+  };
+
+  const handleJoinCardRoom = async (
+    rawCode: string,
+    actionType: 'join' | 'rejoin' = 'join'
+  ) => {
+    if (firestoreEnabled && !authUser) {
+      setCardErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    const cleanCode = rawCode.toUpperCase().trim();
+    if (cleanCode.length !== 5) {
+      setCardErrorMsg(t(lang, 'errInvalidCode'));
+      return;
+    }
+    setCardErrorMsg(null);
+    setCardLoadingAction(actionType);
+    try {
+      const displayName = playerName.trim() || authUser?.displayName || 'Player';
+      await cardRoomService.joinRoom(
+        cleanCode,
+        { id: myId, name: displayName, avatar },
+        {
+          onState: (next) => setCardRoom(next),
+          onSignal: (sig) => cardsVoiceSignalRef.current(sig),
+          onError: (codeErr) => setCardErrorMsg(mapTransportError(codeErr)),
+        }
+      );
+      setRejoinCardRoom(null);
+      await cardsVoice.requestMicrophone();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setCardErrorMsg(mapTransportError(msg));
+    } finally {
+      setCardLoadingAction(null);
+    }
+  };
+
+  const handleLeaveCardRoom = async () => {
+    if (cardRoom) {
+      await cardRoomService.leaveRoom(cardRoom.code, myId);
+    }
+    cardsVoice.stopMicrophone();
+    setCardRoom(null);
+    setRejoinCardRoom(null);
+    setCardErrorMsg(null);
+  };
+
   const playersList = room ? getSortedPlayers(room.players) : [];
   const speakingNames = playersList
     .filter((p) => speakingIds[p.id])
@@ -1013,9 +1183,13 @@ export default function App() {
           ? animalRoom
             ? `gta_${animalRoom.phase}`
             : 'gta_menu'
-          : charadesRoom
-            ? `dc_${charadesRoom.phase}`
-            : 'dc_menu';
+          : activeGame === 'playing_cards'
+            ? cardRoom
+              ? `pc_${cardRoom.phase}_${cardRoom.selectedGame}`
+              : 'pc_menu'
+            : charadesRoom
+              ? `dc_${charadesRoom.phase}`
+              : 'dc_menu';
 
   const topBarTitle =
     activeGame === 'hub'
@@ -1024,7 +1198,9 @@ export default function App() {
         ? t(lang, 'gtaTitle')
         : activeGame === 'charades'
           ? t(lang, 'dcTitle')
-          : t(lang, 'appTitle');
+          : activeGame === 'playing_cards'
+            ? t(lang, 'pcMenuTitle')
+            : t(lang, 'appTitle');
 
   const topBarSubtitle =
     activeGame === 'hub'
@@ -1033,7 +1209,9 @@ export default function App() {
         ? t(lang, 'gtaCardBadge')
         : activeGame === 'charades'
           ? t(lang, 'dcBadge')
-          : t(lang, 'tagline');
+          : activeGame === 'playing_cards'
+            ? t(lang, 'pcBadge')
+            : t(lang, 'tagline');
 
   const activeRoomCode =
     activeGame === 'word_battle'
@@ -1042,7 +1220,9 @@ export default function App() {
         ? animalRoom?.code
         : activeGame === 'charades'
           ? charadesRoom?.code
-          : undefined;
+          : activeGame === 'playing_cards'
+            ? cardRoom?.code
+            : undefined;
 
   return (
     <div
@@ -1051,7 +1231,9 @@ export default function App() {
           ? 'bg-[#FEF9EC] text-slate-900'
           : activeGame === 'charades'
             ? 'bg-[#0E071B] text-slate-100'
-            : 'bg-[#0B0F17] text-slate-100'
+            : activeGame === 'playing_cards'
+              ? 'bg-[#141816] text-[#FAF7F0]'
+              : 'bg-[#0B0F17] text-slate-100'
       }`}
     >
       <TopBar
@@ -1062,11 +1244,12 @@ export default function App() {
         roomCode={activeRoomCode}
         onLeaveRoom={activeGame === 'word_battle' && room ? handleLeaveRoom : undefined}
         onBackToHub={
-          activeGame !== 'hub' && !room && !animalRoom && !charadesRoom
+          activeGame !== 'hub' && !room && !animalRoom && !charadesRoom && !cardRoom
             ? () => {
                 setErrorMsg(null);
                 setAnimalErrorMsg(null);
                 setCharadesErrorMsg(null);
+                setCardErrorMsg(null);
                 setActiveGame('hub');
               }
             : undefined
@@ -1100,6 +1283,7 @@ export default function App() {
                 onSelectWordBattle={() => setActiveGame('word_battle')}
                 onSelectGuessAnimal={() => setActiveGame('guess_animal')}
                 onSelectDumbCharades={() => setActiveGame('charades')}
+                onSelectPlayingCards={() => setActiveGame('playing_cards')}
               />
             ) : activeGame === 'word_battle' ? (
               !room ? (
@@ -1249,6 +1433,97 @@ export default function App() {
                   speakingIds={animalVoice.speakingIds}
                   onToggleVoice={handleToggleAnimalVoice}
                   onToggleMute={animalVoice.toggleMute}
+                />
+              )
+            ) : activeGame === 'playing_cards' ? (
+              !cardRoom ? (
+                <PlayingCardsMenuScreen
+                  lang={lang}
+                  playerName={playerName}
+                  initialJoinCode={initialCardsCode}
+                  authReady={authReady}
+                  authUser={authUser}
+                  signingIn={signingIn}
+                  onSignIn={handleSignIn}
+                  onCreateRoom={handleCreateCardRoom}
+                  onJoinRoom={(code) => handleJoinCardRoom(code, 'join')}
+                  onBack={() => {
+                    setCardErrorMsg(null);
+                    setActiveGame('hub');
+                  }}
+                  rejoinRoom={rejoinCardRoom}
+                  onRejoin={(code) => handleJoinCardRoom(code, 'rejoin')}
+                  onDismissRejoin={() => {
+                    saveActiveCardRoomCode(myId, null);
+                    setRejoinCardRoom(null);
+                  }}
+                  errorMsg={cardErrorMsg}
+                  loadingAction={cardLoadingAction}
+                />
+              ) : cardRoom.phase === 'lobby' ? (
+                <PlayingCardsLobbyScreen
+                  lang={lang}
+                  room={cardRoom}
+                  myId={myId}
+                  speakingIds={cardsVoice.speakingIds}
+                  micStatus={cardsVoice.micStatus}
+                  isMuted={cardsVoice.isMuted}
+                  localMutedPeers={cardsVoice.localMutedPeers}
+                  peerStates={cardsVoice.peerStates}
+                  onRequestMic={cardsVoice.requestMicrophone}
+                  onToggleMute={cardsVoice.toggleMute}
+                  onTogglePeerMute={cardsVoice.togglePeerMute}
+                  onReconnectVoice={cardsVoice.reconnectVoice}
+                  onToggleReady={async (ready) => {
+                    try {
+                      setCardErrorMsg(null);
+                      await cardRoomService.setReady(cardRoom.code, myId, ready);
+                    } catch (err) {
+                      setCardErrorMsg(err instanceof Error ? err.message : 'Failed');
+                    }
+                  }}
+                  onUpdateConfig={async (payload) => {
+                    try {
+                      setCardErrorMsg(null);
+                      await cardRoomService.updateConfig(cardRoom.code, myId, payload);
+                    } catch (err) {
+                      setCardErrorMsg(err instanceof Error ? err.message : 'Failed');
+                    }
+                  }}
+                  onStartGame={async () => {
+                    try {
+                      setCardErrorMsg(null);
+                      await cardRoomService.startGame(cardRoom.code, myId);
+                    } catch (err) {
+                      setCardErrorMsg(
+                        err instanceof Error ? err.message.replace(/_/g, ' ') : 'Could not start game'
+                      );
+                    }
+                  }}
+                  onLeaveRoom={handleLeaveCardRoom}
+                  errorMsg={cardErrorMsg}
+                />
+              ) : (
+                <PlayingCardsTableScreen
+                  lang={lang}
+                  room={cardRoom}
+                  myId={myId}
+                  speakingIds={cardsVoice.speakingIds}
+                  micStatus={cardsVoice.micStatus}
+                  isMuted={cardsVoice.isMuted}
+                  localMutedPeers={cardsVoice.localMutedPeers}
+                  peerStates={cardsVoice.peerStates}
+                  onRequestMic={cardsVoice.requestMicrophone}
+                  onToggleMute={cardsVoice.toggleMute}
+                  onTogglePeerMute={cardsVoice.togglePeerMute}
+                  onReconnectVoice={cardsVoice.reconnectVoice}
+                  onAction={async (action) => {
+                    await cardRoomService.sendAction(cardRoom.code, myId, action);
+                  }}
+                  onPlayAgain={async (mode) => {
+                    await cardRoomService.playAgain(cardRoom.code, myId, mode);
+                  }}
+                  onLeaveRoom={handleLeaveCardRoom}
                 />
               )
             ) : !charadesRoom ? (

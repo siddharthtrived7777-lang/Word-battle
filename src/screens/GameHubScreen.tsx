@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Clapperboard, Film, LogIn, LogOut, Sparkles, Users } from 'lucide-react';
+import { ArrowRight, Clapperboard, Film, LogIn, LogOut, Spade, Sparkles, Users } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Language, PlayerAvatar } from '../types/game';
 import { t } from '../data/i18n';
@@ -21,6 +21,7 @@ interface GameHubScreenProps {
   onSelectWordBattle: () => void;
   onSelectGuessAnimal: () => void;
   onSelectDumbCharades: () => void;
+  onSelectPlayingCards: () => void;
 }
 
 export const GameHubScreen: React.FC<GameHubScreenProps> = ({
@@ -38,6 +39,7 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
   onSelectWordBattle,
   onSelectGuessAnimal,
   onSelectDumbCharades,
+  onSelectPlayingCards,
 }) => {
   const firestoreEnabled = isFirestoreConfigured();
   const needsAuth = firestoreEnabled && !authUser;
@@ -193,8 +195,8 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
         )}
       </div>
 
-      {/* Three Game Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+      {/* Four Game Categories */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
         {/* Card 1: Word Battle */}
         <article className="bg-[#151C2C] border border-slate-800/90 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6">
           <div className="space-y-4">
@@ -271,8 +273,8 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
           </div>
         </article>
 
-        {/* Card 3: Bollywood Dumb Charades (Placed AFTER Guess the Animal) */}
-        <article className="md:col-span-2 lg:col-span-1 group relative overflow-hidden bg-gradient-to-br from-[#340E33] via-[#1C0B2E] to-[#11071E] border border-amber-400/45 hover:border-amber-300 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 shadow-2xl transition-all duration-300 hover:-translate-y-1">
+        {/* Card 3: Bollywood Dumb Charades */}
+        <article className="group relative overflow-hidden bg-gradient-to-br from-[#340E33] via-[#1C0B2E] to-[#11071E] border border-amber-400/45 hover:border-amber-300 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 shadow-2xl transition-all duration-300 hover:-translate-y-1">
           {/* Spotlight & subtle film sparkle */}
           <div
             aria-hidden="true"
@@ -313,6 +315,52 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
               type="button"
               onClick={onSelectDumbCharades}
               className="min-h-[48px] px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:brightness-105 text-slate-950 font-display font-extrabold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98]"
+            >
+              <span>{t(lang, 'playNow')}</span>
+              <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+          </div>
+        </article>
+
+        {/* Card 4: Playing Cards Lounge */}
+        <article className="group relative overflow-hidden bg-[#173326] border border-[#4D3427] hover:border-[#C5A059] rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 shadow-xl transition-all duration-300 hover:-translate-y-1">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-3 rounded-2xl border border-[#C5A059]/15"
+          />
+
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-[#12261C] border border-[#C5A059]/45 text-[#FAF7F0] flex items-center justify-center shadow-md">
+                <Spade className="w-6 h-6 text-[#C5A059]" />
+              </div>
+              <span className="text-xs font-medium text-[#D9CEB8]">
+                {t(lang, 'pcBadge')}
+              </span>
+            </div>
+
+            <div>
+              <h2 className="font-display text-2xl font-extrabold text-[#FAF7F0] tracking-tight">
+                {t(lang, 'pcTitle')}
+              </h2>
+              <p className="text-sm text-[#D9CEB8] mt-2 leading-relaxed">
+                {t(lang, 'pcSubtitle')}
+              </p>
+              <p className="text-xs text-[#C5A059] mt-2 font-medium">
+                UNO · Satyo · Mongoose · Gadha Chor
+              </p>
+            </div>
+          </div>
+
+          <div className="relative z-10 pt-4 border-t border-[#FAF7F0]/12 flex items-center justify-between gap-4">
+            <span className="text-xs font-semibold text-[#D9CEB8] flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-[#C5A059]" />
+              <span>2–8 {t(lang, 'playersCount')}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onSelectPlayingCards}
+              className="min-h-[48px] px-6 rounded-2xl bg-[#FAF7F0] hover:bg-[#EFE8DA] text-[#173326] font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-all active:scale-[0.98]"
             >
               <span>{t(lang, 'playNow')}</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />
