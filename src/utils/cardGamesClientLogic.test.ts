@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 import {
   buildGadhaChorDeck,
   buildUnoDeck,
+  CARD_ROOM_TTL_MS,
   createEmptySatyoLanes,
+  decideCardRoomCreateConflict,
+  decideCardRoomJoinAction,
   DEFAULT_CARD_SETTINGS,
   getGadhaTargetUidFromCounts,
   isMongoosePlayLegal,
   isSatyoCardPlayable,
   isUnoCardPlayable,
+  isValidCardRoomCodeFormat,
+  sanitizeCardRoomCode,
   stripGadhaPairs,
 } from './cardGamesClientLogic.ts';
 
@@ -136,4 +141,112 @@ describe('cardGamesClientLogic parity', () => {
     const target = getGadhaTargetUidFromCounts(['p1', 'p2', 'p3'], players, 'p1', 'clockwise');
     assert.equal(target, 'p3');
   });
+
+  it('sanitizes room codes and validates 5-character format', () => {
+    assert.equal(sanitizeCardRoomCode(' ab-9z! '), 'AB9Z');
+    assert.equal(sanitizeCardRoomCode('hk3m9extra'), 'HK3M9');
+    assert.equal(isValidCardRoomCodeFormat('HK3M9'), true);
+    assert.equal(isValidCardRoomCodeFormat('HK3M'), false);
+    assert.equal(isValidCardRoomCodeFormat('hk3m9'), false);
+  });
+
+  it('handles create conflict idempotently for own room and signals collision for another host without deletion', () => {
+    assert.equal(
+      decideCardRoomCreateConflict({ hostId: 'u1', playerIds: ['u1'] }, 'u1'),
+      'reuse_existing'
+    );
+    assert.equal(
+      decideCardRoomCreateConflict({ hostId: 'u2', playerIds: ['u2', 'u1'] }, 'u1'),
+      'reuse_existing'
+    );
+    assert.equal(
+      decideCardRoomCreateConflict({ hostId: 'u2', playerIds: ['u2'] }, 'u1'),
+      'collision'
+    );
+  });
+
+  it('allows joining open lobbies for all 4 games, blocks full/active rooms for outsiders, and supports browser-refresh rejoin', () => {
+    const now = 1_700_000_000_000;
+    for (const game of ['uno', 'satyo', 'mongoose', 'gadha_chor'] as const) {
+      assert.deepEqual(
+        decideCardRoomJoinAction(
+          {
+            selectedGame: game,
+            phase: 'lobby',
+            playerIds: ['u1'],
+            createdAt: now - 5000,
+            updatedAt: now - 1000,
+          },
+          'u2',
+          now
+        ),
+        { action: 'join' }
+      );
+    }
+
+    // Rejoin works even when game is actively playing
+    assert.deepEqual(
+      decideCardRoomJoinAction(
+        {
+          selectedGame: 'uno',
+          phase: 'playing',
+          playerIds: ['u1', 'u2'],
+          createdAt: now - 5000,
+          updatedAt: now - 1000,
+        },
+        'u2',
+        now
+      ),
+      { action: 'rejoin' }
+    );
+
+    // Outsider rejected from active game
+    assert.deepEqual(
+      decideCardRoomJoinAction(
+        {
+          selectedGame: 'uno',
+          phase: 'playing',
+          playerIds: ['u1', 'u2'],
+          createdAt: now - 5000,
+          updatedAt: now - 1000,
+        },
+        'u3',
+        now
+      ),
+      { action: 'reject', error: 'GAME_IN_PROGRESS' }
+    );
+
+    // Satyo 6-player capacity cap vs UNO 8-player capacity
+    assert.deepEqual(
+      decideCardRoomJoinAction(
+        {
+          selectedGame: 'satyo',
+          phase: 'lobby',
+          playerIds: ['u1', 'u2', 'u3', 'u4', 'u5', 'u6'],
+          createdAt: now - 5000,
+          updatedAt: now - 1000,
+        },
+        'u7',
+        now
+      ),
+      { action: 'reject', error: 'ROOM_FULL' }
+    );
+
+    // Expired room rejected for non-members
+    assert.deepEqual(
+      decideCardRoomJoinAction(
+        {
+          selectedGame: 'mongoose',
+          phase: 'lobby',
+          playerIds: ['u1'],
+          createdAt: now - CARD_ROOM_TTL_MS - 1000,
+          updatedAt: now - CARD_ROOM_TTL_MS - 1000,
+        },
+        'u2',
+        now
+      ),
+      { action: 'reject', error: 'ROOM_NOT_FOUND' }
+    );
+  });
 });
+

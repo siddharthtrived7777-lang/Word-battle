@@ -563,7 +563,21 @@ async function startServer() {
         res.status(400).json({ code: 'INVALID_REQUEST' });
         return;
       }
-      if (cardRooms.has(code)) {
+      const existingRoom = cardRooms.get(code);
+      if (existingRoom) {
+        if (existingRoom.players[uid]) {
+          existingRoom.players[uid].connected = true;
+          if (player.name.trim()) {
+            existingRoom.players[uid].name = player.name.trim().slice(0, 20);
+          }
+          if (player.avatar) {
+            existingRoom.players[uid].avatar = player.avatar;
+          }
+          existingRoom.updatedAt = Date.now();
+          broadcastCardRoom(code);
+          res.json({ state: serializeCardRoomForPlayer(existingRoom, uid) });
+          return;
+        }
         res.status(409).json({ code: 'ROOM_EXISTS' });
         return;
       }

@@ -428,3 +428,65 @@ export function findNextGadhaTurnIndex(
   }
   return fallbackIndex;
 }
+
+export const CARD_ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function sanitizeCardRoomCode(raw: string): string {
+  return String(raw || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 5);
+}
+
+export function isValidCardRoomCodeFormat(code: string): boolean {
+  return /^[A-Z0-9]{5}$/.test(code);
+}
+
+export function isCardRoomExpired(
+  room: { createdAt: number; updatedAt: number },
+  now = Date.now()
+): boolean {
+  const lastTouch = Math.max(room.updatedAt || 0, room.createdAt || 0);
+  if (lastTouch <= 0) return false;
+  return now - lastTouch > CARD_ROOM_TTL_MS;
+}
+
+export function decideCardRoomCreateConflict(
+  existing: { hostId: string; playerIds: string[] },
+  uid: string
+): 'reuse_existing' | 'collision' {
+  if (existing.hostId === uid || existing.playerIds.includes(uid)) {
+    return 'reuse_existing';
+  }
+  return 'collision';
+}
+
+export function decideCardRoomJoinAction(
+  existing: {
+    selectedGame: CardGameId;
+    phase: 'lobby' | 'playing' | 'finished';
+    playerIds: string[];
+    createdAt: number;
+    updatedAt: number;
+  },
+  uid: string,
+  now = Date.now()
+):
+  | { action: 'rejoin' | 'join' }
+  | { action: 'reject'; error: 'ROOM_NOT_FOUND' | 'GAME_IN_PROGRESS' | 'ROOM_FULL' } {
+  if (existing.playerIds.includes(uid)) {
+    return { action: 'rejoin' };
+  }
+  if (isCardRoomExpired(existing, now)) {
+    return { action: 'reject', error: 'ROOM_NOT_FOUND' };
+  }
+  if (existing.phase !== 'lobby') {
+    return { action: 'reject', error: 'GAME_IN_PROGRESS' };
+  }
+  const limits = getCardGamePlayerLimits(existing.selectedGame);
+  if (existing.playerIds.length >= limits.max) {
+    return { action: 'reject', error: 'ROOM_FULL' };
+  }
+  return { action: 'join' };
+}
+

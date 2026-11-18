@@ -204,22 +204,9 @@ class AnimalRoomService {
 
     try {
       await runTransaction(firestoreDb, async (tx) => {
-        let snap;
-        try {
-          snap = await tx.get(roomRef);
-        } catch (readErr) {
-          const { code: fbCode } = extractFirebaseError(readErr);
-          if (fbCode === 'permission-denied') {
-            throw new Error('ROOM_EXISTS');
-          }
-          throw readErr;
-        }
+        const snap = await tx.get(roomRef);
 
         if (snap.exists()) {
-          const existing = normalizeAnimalRoom(snap.data() as AnimalRoomState);
-          if (isAnimalRoomStale(existing)) {
-            tx.delete(roomRef);
-          }
           throw new Error('ROOM_EXISTS');
         }
 

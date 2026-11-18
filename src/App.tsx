@@ -9,6 +9,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   auth,
+  extractFirebaseError,
   isFirestoreConfigured,
   signInWithGoogle,
   signOutFirebase,
@@ -210,6 +211,7 @@ export default function App() {
   const resolvingGadhaPickRef = useRef<string>('');
   const revealingCardsFinishRef = useRef<string>('');
   const cardTimeoutKeyRef = useRef<string>('');
+  const cardEntryLockRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!firestoreEnabled) return;
@@ -579,21 +581,64 @@ export default function App() {
   };
 
   const mapTransportError = useCallback(
-    (code: string) => {
-      if (code.startsWith('CONNECTION_FAILED:')) {
-        const detail = code.slice('CONNECTION_FAILED:'.length);
+    (rawCode: string) => {
+      let code = rawCode;
+      let detailMsg = '';
+
+      if (rawCode.startsWith('{') && rawCode.includes('"operationType"')) {
+        const extracted = extractFirebaseError({ message: rawCode });
+        code = extracted.code || rawCode;
+        detailMsg = extracted.message;
+      } else if (rawCode.startsWith('CONNECTION_FAILED:')) {
+        const detail = rawCode.slice('CONNECTION_FAILED:'.length);
         console.error('Room connection error:', detail);
         return `${t(lang, 'errConnectionFailed')} (${detail})`;
       }
+
+      const lowerDetail = detailMsg.toLowerCase();
+      if (
+        code === 'unavailable' ||
+        lowerDetail.includes('offline') ||
+        lowerDetail.includes('network')
+      ) {
+        return lang === 'hi'
+          ? `रूम सर्वर से कनेक्शन नहीं हो पाया — नेटवर्क ऑफ़लाइन या अस्थायी रूप से अनुपलब्ध है (${code}).`
+          : `Could not connect to the room server — network is offline or temporarily unavailable (${code}).`;
+      }
+      if (code === 'permission-denied' || code === 'unauthenticated') {
+        return lang === 'hi'
+          ? `प्रमाणीकरण या रूम अनुमति अस्वीकृत हुई (${code}). कृपया Google से दोबारा साइन इन करें।`
+          : `Authentication or room permission denied (${code}). Please sign in with Google again.`;
+      }
+      if (code === 'resource-exhausted') {
+        return lang === 'hi'
+          ? `डेटाबेस की दैनिक सीमा समाप्त हो गई है (${code}).`
+          : `Database daily quota exceeded (${code}).`;
+      }
+
       switch (code) {
         case 'ROOM_NOT_FOUND':
           return t(lang, 'errRoomNotFound');
         case 'ROOM_FULL':
           return t(lang, 'errRoomFull');
+        case 'ROOM_UNAVAILABLE':
+          return lang === 'hi'
+            ? 'यह रूम पहले से भरा है या इसमें गेम चल रहा है।'
+            : 'This room is already full or a game is currently in progress.';
+        case 'ROOM_EXISTS':
+          return lang === 'hi'
+            ? 'रूम कोड पहले से उपयोग में है। कृपया नया रूम बनाने के लिए दोबारा प्रयास करें।'
+            : 'That room code is already active. Please try again to generate a fresh code.';
+        case 'INVALID_CODE':
+          return t(lang, 'errInvalidCode');
         case 'GAME_IN_PROGRESS':
           return t(lang, 'errGameInProgress');
         case 'AUTH_REQUIRED':
           return t(lang, 'signInRequired');
+        case 'AUTH_UNVERIFIED':
+          return lang === 'hi'
+            ? 'कृपया सत्यापित ईमेल वाले Google खाते से साइन इन करें।'
+            : 'Please sign in with a verified Google account to play online.';
         case 'CONNECTION_FAILED':
           return t(lang, 'errConnectionFailed');
         case 'DISCONNECTED':
@@ -604,9 +649,11 @@ export default function App() {
           return 'Satyo supports up to 6 players.';
         case 'MAX_8_PLAYERS':
           return 'Maximum 8 players allowed in this room.';
-        default:
-          console.error('Unexpected room error:', code);
-          return `${t(lang, 'errConnectionFailed')} (${code})`;
+        default: {
+          const suffix = code && code !== 'unknown' ? code : detailMsg || 'unknown';
+          console.error('Unexpected room error:', rawCode);
+          return `${t(lang, 'errConnectionFailed')} (${suffix})`;
+        }
       }
     },
     [lang]
@@ -1153,17 +1200,29 @@ export default function App() {
 
   // ---------------- Playing Cards Handlers ----------------
   const handleCreateCardRoom = async (selectedGame: CardGameId) => {
+    if (cardEntryLockRef.current) return;
     if (firestoreEnabled && !authUser) {
       setCardErrorMsg(t(lang, 'signInRequired'));
       return;
     }
+    if (firestoreEnabled && authUser && !authUser.emailVerified) {
+      setCardErrorMsg(mapTransportError('AUTH_UNVERIFIED'));
+      return;
+    }
+    cardEntryLockRef.current = true;
     setCardErrorMsg(null);
     setCardLoadingAction('create');
     try {
       const displayName = playerName.trim() || authUser?.displayName || 'Player';
+      const triedCodes = new Set<string>();
       let lastErr: unknown = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const code = generateRoomCode();
+      for (let attempt = 0; attempt < 8; attempt++) {
+        let code = generateRoomCode();
+        while (triedCodes.has(code)) {
+          code = generateRoomCode();
+        }
+        triedCodes.add(code);
+
         try {
           await cardRoomService.createRoom(
             code,
@@ -1186,11 +1245,12 @@ export default function App() {
         }
       }
       if (lastErr) throw lastErr;
-      await cardsVoice.requestMicrophone();
+      await cardsVoice.requestMicrophone().catch(() => {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
       setCardErrorMsg(mapTransportError(msg));
     } finally {
+      cardEntryLockRef.current = false;
       setCardLoadingAction(null);
     }
   };
@@ -1199,15 +1259,21 @@ export default function App() {
     rawCode: string,
     actionType: 'join' | 'rejoin' = 'join'
   ) => {
+    if (cardEntryLockRef.current) return;
     if (firestoreEnabled && !authUser) {
       setCardErrorMsg(t(lang, 'signInRequired'));
       return;
     }
-    const cleanCode = rawCode.toUpperCase().trim();
+    if (firestoreEnabled && authUser && !authUser.emailVerified) {
+      setCardErrorMsg(mapTransportError('AUTH_UNVERIFIED'));
+      return;
+    }
+    const cleanCode = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
     if (cleanCode.length !== 5) {
       setCardErrorMsg(t(lang, 'errInvalidCode'));
       return;
     }
+    cardEntryLockRef.current = true;
     setCardErrorMsg(null);
     setCardLoadingAction(actionType);
     try {
@@ -1222,11 +1288,12 @@ export default function App() {
         }
       );
       setRejoinCardRoom(null);
-      await cardsVoice.requestMicrophone();
+      await cardsVoice.requestMicrophone().catch(() => {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
       setCardErrorMsg(mapTransportError(msg));
     } finally {
+      cardEntryLockRef.current = false;
       setCardLoadingAction(null);
     }
   };
@@ -1535,6 +1602,7 @@ export default function App() {
                     setRejoinCardRoom(null);
                   }}
                   errorMsg={cardErrorMsg}
+                  onDismissError={() => setCardErrorMsg(null)}
                   loadingAction={cardLoadingAction}
                 />
               ) : cardRoom.phase === 'lobby' ? (

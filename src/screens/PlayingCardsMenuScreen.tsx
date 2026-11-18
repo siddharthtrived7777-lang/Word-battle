@@ -1,5 +1,17 @@
-import React, { useState } from 'react';
-import { ArrowLeft, BookOpen, LogIn, Play, RotateCcw, Spade, Users } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BookOpen,
+  LogIn,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Spade,
+  Users,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import type { User } from 'firebase/auth';
 import type { CardGameId, CardRoomClientState } from '../types/cardGames';
 import type { Language } from '../types/game';
@@ -23,7 +35,193 @@ interface PlayingCardsMenuScreenProps {
   onRejoin: (code: string) => Promise<void>;
   onDismissRejoin: () => void;
   errorMsg: string | null;
+  onDismissError?: () => void;
   loadingAction: 'create' | 'join' | 'rejoin' | null;
+}
+
+type LastMenuAttempt =
+  | { type: 'create'; gameId: CardGameId }
+  | { type: 'join'; code: string }
+  | { type: 'rejoin'; code: string }
+  | null;
+
+type ErrorCategory = 'offline' | 'auth' | 'room_not_found' | 'room_state' | 'quota' | 'connection';
+
+interface ErrorDiagnosis {
+  category: ErrorCategory;
+  title: string;
+  steps: string[];
+  showSignIn: boolean;
+  showRetry: boolean;
+}
+
+function diagnoseConnectionError(
+  errorMsg: string,
+  lang: Language,
+  isOnline: boolean,
+  needsAuth: boolean,
+  hasLastAttempt: boolean
+): ErrorDiagnosis {
+  const lower = errorMsg.toLowerCase();
+  const isHi = lang === 'hi';
+
+  const isOfflineErr =
+    !isOnline ||
+    lower.includes('offline') ||
+    lower.includes('unavailable') ||
+    lower.includes('network') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('timeout') ||
+    lower.includes('नेटवर्क') ||
+    lower.includes('ऑफ़लाइन');
+
+  const isAuthErr =
+    needsAuth ||
+    lower.includes('sign in') ||
+    lower.includes('auth') ||
+    lower.includes('permission') ||
+    lower.includes('unauthenticated') ||
+    lower.includes('verified') ||
+    lower.includes('साइन इन') ||
+    lower.includes('अनुमति');
+
+  const isRoomNotFound =
+    lower.includes('not found') ||
+    lower.includes('room_not_found') ||
+    lower.includes('5-character') ||
+    lower.includes('नहीं मिला') ||
+    lower.includes('5-अक्षर');
+
+  const isRoomState =
+    lower.includes('already') ||
+    lower.includes('room_full') ||
+    lower.includes('room_unavailable') ||
+    lower.includes('game_in_progress') ||
+    lower.includes('in progress') ||
+    lower.includes('at least 2') ||
+    lower.includes('up to 6') ||
+    lower.includes('maximum 8') ||
+    lower.includes('पहले से') ||
+    lower.includes('भरा है');
+
+  const isQuota =
+    lower.includes('quota') || lower.includes('resource-exhausted') || lower.includes('सीमा');
+
+  if (isOfflineErr) {
+    return {
+      category: 'offline',
+      title: isHi ? 'नेटवर्क या सर्वर से संपर्क नहीं हो पा रहा' : 'Connection Interrupted',
+      steps: isHi
+        ? [
+            'सुनिश्चित करें कि आपका Wi-Fi या मोबाइल डेटा चालू है।',
+            'VPN, सख्त एड-ब्लॉकर या फ़ायरवॉल बंद करके देखें जो लाइव डेटाबेस ट्रैफ़िक रोक सकता है।',
+            'कुछ सेकंड रुककर "दोबारा प्रयास करें" दबाएँ या पेज रीफ़्रेश करें।',
+          ]
+        : [
+            'Verify that your Wi-Fi or mobile data connection is active and stable.',
+            'Temporarily disable VPNs, strict ad-blockers, or browser privacy shields that may block Firestore requests.',
+            'Wait a few seconds and click Try Again, or refresh the page.',
+          ],
+      showSignIn: false,
+      showRetry: hasLastAttempt,
+    };
+  }
+
+  if (isAuthErr) {
+    return {
+      category: 'auth',
+      title: isHi ? 'साइन-इन या अनुमति की समस्या' : 'Account Sign-In Required',
+      steps: isHi
+        ? [
+            'नीचे दिए गए बटन से अपने Google खाते से फिर से साइन इन करें।',
+            'यदि Google लॉगिन विंडो नहीं खुल रही है, तो ब्राउज़र में इस साइट के लिए पॉप-अप (Pop-ups) की अनुमति दें।',
+            'जाँचें कि आपके Google खाते का ईमेल सत्यापित (verified) है और निजी/इनकॉग्निटो मोड कुकीज़ ब्लॉक नहीं कर रहा।',
+          ]
+        : [
+            'Sign in again with your Google account below to refresh your active session.',
+            'Allow browser pop-ups for this site if the Google sign-in window was blocked or closed early.',
+            'Ensure third-party cookies/storage are enabled (private browsing modes can block Firebase login).',
+          ],
+      showSignIn: true,
+      showRetry: !needsAuth && hasLastAttempt,
+    };
+  }
+
+  if (isQuota) {
+    return {
+      category: 'quota',
+      title: isHi ? 'सर्वर उपयोग सीमा पूरी हो गई' : 'Temporary Server Limit Reached',
+      steps: isHi
+        ? [
+            'फ़्री-टियर डेटाबेस की दैनिक सीमा अस्थायी रूप से पूरी हो गई है।',
+            'सीमा रीसेट होने तक थोड़ी देर प्रतीक्षा करें और फिर प्रयास करें।',
+          ]
+        : [
+            'The free-tier database daily read/write quota has been temporarily reached.',
+            'Wait for the quota window to reset before starting a new card room.',
+          ],
+      showSignIn: false,
+      showRetry: false,
+    };
+  }
+
+  if (isRoomNotFound) {
+    return {
+      category: 'room_not_found',
+      title: isHi ? 'रूम कोड नहीं मिला' : 'Room Could Not Be Found',
+      steps: isHi
+        ? [
+            'अपने दोस्त से 5-अक्षर का रूम कोड दोबारा जाँचें (अक्सर अक्षर या अंक गलत टाइप हो जाते हैं)।',
+            'होस्ट से पूछें कि क्या रूम अभी खुला है — खाली या पुराने रूम अपने आप बंद हो जाते हैं।',
+            'या नीचे किसी भी गेम पर "खेलें" दबाकर खुद एक नया कार्ड रूम बनाएँ।',
+          ]
+        : [
+            'Double-check all 5 characters of the room code with the host.',
+            'Confirm the room is still open — idle or empty rooms close automatically.',
+            'Or start a fresh table by clicking Play on any game card below and share your code.',
+          ],
+      showSignIn: false,
+      showRetry: hasLastAttempt,
+    };
+  }
+
+  if (isRoomState) {
+    return {
+      category: 'room_state',
+      title: isHi ? 'इस रूम में अभी नहीं जुड़ सकते' : 'Unable to Enter This Room',
+      steps: isHi
+        ? [
+            'यदि गेम पहले ही शुरू हो चुका है, तो इस राउंड के पूरा होने का इंतज़ार करें।',
+            'सीट सीमा जाँचें (Satyo: अधिकतम 6 खिलाड़ी · UNO, Mongoose, Gadha Chor: अधिकतम 8)।',
+            'नई गेम टेबल शुरू करने के लिए नीचे किसी भी गेम पर "खेलें" दबाएँ।',
+          ]
+        : [
+            'If a hand is already underway, wait for the host to return to the lobby.',
+            'Check table capacity (Satyo supports up to 6 players; UNO, Mongoose & Gadha Chor support up to 8).',
+            'Create a new card room below to start with a fresh group.',
+          ],
+      showSignIn: false,
+      showRetry: false,
+    };
+  }
+
+  return {
+    category: 'connection',
+    title: isHi ? 'रूम सर्वर से कनेक्शन विफल' : 'Could Not Reach Room Server',
+    steps: isHi
+      ? [
+          'अपना इंटरनेट कनेक्शन जाँचें और देखें कि VPN या प्रॉक्सी कनेक्शन बाधित तो नहीं कर रहा।',
+          'यदि टैब काफी देर से खुला था, तो Google से दोबारा साइन इन करें ताकि सेशन ताज़ा हो सके।',
+          'नीचे "दोबारा प्रयास करें" दबाएँ या पेज रीलोड करके फिर कोशिश करें।',
+        ]
+      : [
+          'Check your internet connection and make sure no firewall, proxy, or VPN is blocking live sync.',
+          'Refresh your Google sign-in below if the tab has been idle for a while.',
+          'Click Try Again below, or reload the page and retry creating or joining the room.',
+        ],
+    showSignIn: true,
+    showRetry: hasLastAttempt,
+  };
 }
 
 const TileCardVisual: React.FC<{ gameId: CardGameId }> = ({ gameId }) => {
@@ -97,16 +295,34 @@ export const PlayingCardsMenuScreen: React.FC<PlayingCardsMenuScreenProps> = ({
   onRejoin,
   onDismissRejoin,
   errorMsg,
+  onDismissError,
   loadingAction,
 }) => {
   const [joinCode, setJoinCode] = useState(initialJoinCode);
   const [rulesModalGame, setRulesModalGame] = useState<CardGameId | null>(null);
   const [creatingGame, setCreatingGame] = useState<CardGameId | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<LastMenuAttempt>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   const firestoreEnabled = isFirestoreConfigured();
   const needsAuth = firestoreEnabled && !authUser;
 
   const handlePlayGame = async (gameId: CardGameId) => {
+    if (loadingAction || creatingGame) return;
+    setLastAttempt({ type: 'create', gameId });
     setCreatingGame(gameId);
     try {
       await onCreateRoom(gameId);
@@ -114,6 +330,41 @@ export const PlayingCardsMenuScreen: React.FC<PlayingCardsMenuScreenProps> = ({
       setCreatingGame(null);
     }
   };
+
+  const handleJoinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loadingAction || creatingGame) return;
+    setLastAttempt({ type: 'join', code: joinCode });
+    await onJoinRoom(joinCode);
+  };
+
+  const handleRejoinClick = async (code: string) => {
+    if (loadingAction || creatingGame) return;
+    setLastAttempt({ type: 'rejoin', code });
+    await onRejoin(code);
+  };
+
+  const handleRetryAttempt = async () => {
+    if (!lastAttempt || loadingAction || creatingGame) return;
+    if (lastAttempt.type === 'create') {
+      await handlePlayGame(lastAttempt.gameId);
+    } else if (lastAttempt.type === 'join') {
+      await onJoinRoom(lastAttempt.code);
+    } else {
+      await onRejoin(lastAttempt.code);
+    }
+  };
+
+  const diagnosis = useMemo(() => {
+    if (!errorMsg) return null;
+    return diagnoseConnectionError(
+      errorMsg,
+      lang,
+      isOnline,
+      needsAuth,
+      Boolean(lastAttempt)
+    );
+  }, [errorMsg, isOnline, lang, lastAttempt, needsAuth]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8 space-y-6 text-[#FAF7F0]">
@@ -149,10 +400,7 @@ export const PlayingCardsMenuScreen: React.FC<PlayingCardsMenuScreenProps> = ({
 
           {/* Join by Room Code */}
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onJoinRoom(joinCode);
-            }}
+            onSubmit={handleJoinSubmit}
             className="w-full lg:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 bg-[#12261C]/90 border border-[#C5A059]/25 rounded-2xl p-2.5"
           >
             <input
@@ -220,7 +468,7 @@ export const PlayingCardsMenuScreen: React.FC<PlayingCardsMenuScreenProps> = ({
             <button
               type="button"
               disabled={Boolean(loadingAction)}
-              onClick={() => onRejoin(rejoinRoom.code)}
+              onClick={() => handleRejoinClick(rejoinRoom.code)}
               className="min-h-[40px] px-4 rounded-xl bg-[#C5A059] hover:bg-[#D2AE69] text-[#141816] font-display font-bold text-xs flex items-center gap-1.5"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -230,12 +478,104 @@ export const PlayingCardsMenuScreen: React.FC<PlayingCardsMenuScreenProps> = ({
         </div>
       )}
 
-      {errorMsg && (
+      {/* Enhanced Connection & Troubleshooting Alert */}
+      {errorMsg && diagnosis && (
         <div
           role="alert"
-          className="px-4 py-3 rounded-2xl bg-[#4E221F]/80 border border-[#9E352B] text-sm font-medium text-[#F5D6D2]"
+          className="rounded-2xl bg-[#2E1716] border border-[#9E352B] p-4 sm:p-5 space-y-4 shadow-xl"
         >
-          {errorMsg}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#4E221F] border border-[#B24136]/60 flex items-center justify-center shrink-0 mt-0.5">
+                {diagnosis.category === 'offline' || !isOnline ? (
+                  <WifiOff className="w-5 h-5 text-[#F5A89D]" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-[#F5A89D]" />
+                )}
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <h2 className="font-display font-bold text-base text-[#FAF7F0]">
+                    {diagnosis.title}
+                  </h2>
+                  <span className="text-xs font-mono-nums text-[#E6D7B7]">
+                    · {isOnline ? (lang === 'hi' ? 'नेटवर्क ऑनलाइन' : 'Network Online') : (lang === 'hi' ? 'नेटवर्क ऑफ़लाइन' : 'Network Offline')}
+                  </span>
+                </div>
+                <p className="text-sm text-[#F5D6D2] break-words">{errorMsg}</p>
+              </div>
+            </div>
+
+            {onDismissError && (
+              <button
+                type="button"
+                onClick={onDismissError}
+                aria-label="Dismiss error"
+                className="min-h-[36px] min-w-[36px] rounded-xl text-[#D9B0AA] hover:text-[#FAF7F0] hover:bg-[#4E221F] flex items-center justify-center shrink-0 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-[#21100F]/90 border border-[#6E2D27]/70 p-3.5 space-y-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-[#E6D7B7]">
+              {lang === 'hi' ? 'समाधान के चरण' : 'Troubleshooting Steps'}
+            </p>
+            <ol className="space-y-1.5 text-xs sm:text-sm text-[#EAD6D3]">
+              {diagnosis.steps.map((step, idx) => (
+                <li key={idx} className="flex items-start gap-2.5">
+                  <span className="font-mono-nums font-bold text-[#C5A059] shrink-0">
+                    {idx + 1}.
+                  </span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {diagnosis.showRetry && (
+              <button
+                type="button"
+                disabled={Boolean(loadingAction)}
+                onClick={handleRetryAttempt}
+                className="min-h-[42px] px-4 rounded-xl bg-[#C5A059] hover:bg-[#D2AE69] disabled:opacity-50 text-[#141816] font-display font-bold text-xs sm:text-sm inline-flex items-center gap-1.5 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>{lang === 'hi' ? 'दोबारा प्रयास करें' : 'Try Again'}</span>
+              </button>
+            )}
+
+            {diagnosis.showSignIn && firestoreEnabled && authReady && (
+              <button
+                type="button"
+                disabled={signingIn}
+                onClick={onSignIn}
+                className="min-h-[42px] px-4 rounded-xl bg-[#FAF7F0] hover:bg-[#EFE8DA] disabled:opacity-50 text-[#141816] font-display font-bold text-xs sm:text-sm inline-flex items-center gap-1.5 transition-colors"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>
+                  {signingIn
+                    ? t(lang, 'signingIn')
+                    : authUser
+                      ? lang === 'hi'
+                        ? 'Google खाता रीफ़्रेश करें'
+                        : 'Re-authenticate Google'
+                      : t(lang, 'signInWithGoogle')}
+                </span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="min-h-[42px] px-4 rounded-xl bg-[#3D201E] hover:bg-[#522B28] border border-[#7E433D] text-[#FAF7F0] font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5 transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{lang === 'hi' ? 'पेज रीलोड करें' : 'Reload Page'}</span>
+            </button>
+          </div>
         </div>
       )}
 

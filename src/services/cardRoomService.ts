@@ -1,5 +1,4 @@
 import {
-  arrayUnion,
   collection,
   deleteDoc,
   deleteField,
@@ -50,14 +49,19 @@ import {
   buildUnoDeck,
   cloneDefaultCardSettings,
   createEmptySatyoLanes,
+  decideCardRoomCreateConflict,
+  decideCardRoomJoinAction,
   findNextGadhaTurnIndex,
   formatCardName,
   getCardGamePlayerLimits,
   getCardGameTimerSeconds,
   getGadhaTargetUidFromCounts,
+  isCardRoomExpired,
   isMongoosePlayLegal,
   isSatyoCardPlayable,
   isUnoCardPlayable,
+  isValidCardRoomCodeFormat,
+  sanitizeCardRoomCode,
   shuffleCardArray,
   sortCardHand,
   stepCardTurnIndex,
@@ -72,7 +76,6 @@ export interface CardRoomCallbacks {
 }
 
 const STORAGE_KEY_PREFIX = 'pa_cards_active_room_';
-const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function saveActiveCardRoomCode(uid: string, code: string | null) {
   try {
@@ -147,10 +150,7 @@ function normalizeCardRoom(raw: CardRoomFirestoreDoc): NormalizedCardRoom {
 }
 
 function isCardRoomStale(room: NormalizedCardRoom): boolean {
-  const lastTouch = Math.max(room.updatedAt, room.createdAt);
-  const isExpired = Date.now() - lastTouch > ROOM_TTL_MS;
-  const activeCount = room.playerIds.filter((pid) => room.players[pid]?.connected !== false).length;
-  return isExpired || room.playerIds.length === 0 || activeCount === 0;
+  return isCardRoomExpired(room) || room.playerIds.length === 0;
 }
 
 function makeLogEntry(actorUid: string, actorName: string, text: string): CardLogEntry {
@@ -1078,11 +1078,28 @@ class CardRoomService {
       for (const d of snap.docs) {
         const room = normalizeCardRoom(d.data() as CardRoomFirestoreDoc);
         if (isCardRoomStale(room)) {
-          deleteDoc(d.ref).catch(() => {});
           continue;
         }
         if (room.playerIds.includes(myUid)) {
           validRooms.push(room);
+        }
+      }
+
+      // Fallback check from locally remembered room code in case query cache misses a just-created room
+      if (validRooms.length === 0) {
+        const savedCode = sanitizeCardRoomCode(loadActiveCardRoomCode(myUid) || '');
+        if (isValidCardRoomCodeFormat(savedCode)) {
+          try {
+            const savedSnap = await getDoc(doc(firestoreDb, 'card_rooms', savedCode));
+            if (savedSnap.exists()) {
+              const savedRoom = normalizeCardRoom(savedSnap.data() as CardRoomFirestoreDoc);
+              if (!isCardRoomStale(savedRoom) && savedRoom.playerIds.includes(myUid)) {
+                validRooms.push(savedRoom);
+              }
+            }
+          } catch {
+            // Ignore fallback read failure
+          }
         }
       }
 
@@ -1127,26 +1144,35 @@ class CardRoomService {
   }
 
   public async createRoom(
-    code: string,
+    rawCode: string,
     selectedGame: CardGameId,
     player: { id: string; name: string; avatar: PlayerAvatar },
     callbacks: CardRoomCallbacks
   ): Promise<CardRoomClientState> {
+    const code = sanitizeCardRoomCode(rawCode);
+    if (!isValidCardRoomCodeFormat(code)) {
+      throw new Error('INVALID_CODE');
+    }
+
     this.cleanup();
     if (!isFirestoreConfigured()) {
       return this.httpCreateRoom(code, selectedGame, player, callbacks);
     }
 
     if (!auth.currentUser) throw new Error('AUTH_REQUIRED');
+    if (!auth.currentUser.emailVerified) throw new Error('AUTH_UNVERIFIED');
+
     const uid = auth.currentUser.uid;
     const roomPath = `card_rooms/${code}`;
     const roomRef = doc(firestoreDb, 'card_rooms', code);
 
     const now = Date.now();
+    const safeName = player.name.trim().slice(0, 20) || 'Player';
+    const safeAvatar = stripUndefined(player.avatar);
     const hostPlayer: CardPlayerPublic = stripUndefined({
       id: uid,
-      name: player.name,
-      avatar: player.avatar,
+      name: safeName,
+      avatar: safeAvatar,
       isHost: true,
       ready: false,
       connected: true,
@@ -1173,28 +1199,59 @@ class CardRoomService {
       updatedAt: serverTimestamp(),
     };
 
+    let resolvedRoom: NormalizedCardRoom | null = null;
+    let joinedExisting = false;
+
     try {
       await runTransaction(firestoreDb, async (tx) => {
-        let snap;
-        try {
-          snap = await tx.get(roomRef);
-        } catch (readErr) {
-          const { code: fbCode } = extractFirebaseError(readErr);
-          if (fbCode === 'permission-denied') {
-            throw new Error('ROOM_EXISTS');
-          }
-          throw readErr;
-        }
+        const snap = await tx.get(roomRef);
 
         if (snap.exists()) {
           const existing = normalizeCardRoom(snap.data() as CardRoomFirestoreDoc);
-          if (isCardRoomStale(existing)) {
-            tx.delete(roomRef);
+          const conflictResolution = decideCardRoomCreateConflict(existing, uid);
+          if (conflictResolution === 'reuse_existing') {
+            // Idempotent re-entry if this user already owns or belongs to this room
+            const updatedMember: CardPlayerPublic = stripUndefined({
+              ...(existing.players[uid] || hostPlayer),
+              id: uid,
+              name: safeName,
+              avatar: safeAvatar,
+              isHost: existing.hostId === uid,
+              connected: true,
+            });
+            tx.update(roomRef, {
+              [`players.${uid}`]: updatedMember,
+              updatedAt: serverTimestamp(),
+            });
+            resolvedRoom = {
+              ...existing,
+              players: {
+                ...existing.players,
+                [uid]: updatedMember,
+              },
+              updatedAt: now,
+            };
+            joinedExisting = true;
+            return;
           }
+          // Existing room belongs to another player: never delete active rooms; signal collision for code retry
           throw new Error('ROOM_EXISTS');
         }
 
         tx.set(roomRef, payload);
+        resolvedRoom = {
+          code,
+          hostId: uid,
+          selectedGame,
+          phase: 'lobby',
+          settings,
+          playerIds: [uid],
+          players: { [uid]: hostPlayer },
+          playerOrder: [uid],
+          table: null,
+          createdAt: now,
+          updatedAt: now,
+        };
       });
     } catch (error) {
       if (error instanceof Error && error.message === 'ROOM_EXISTS') {
@@ -1203,32 +1260,42 @@ class CardRoomService {
       handleFirestoreError(error, OperationType.CREATE, roomPath);
     }
 
+    const activeRoom = resolvedRoom!;
+    let initialHand: CardItem[] = [];
+    if (joinedExisting && activeRoom.phase !== 'lobby') {
+      try {
+        const handSnap = await getDoc(doc(firestoreDb, 'card_rooms', code, 'hands', uid));
+        if (handSnap.exists()) {
+          initialHand = (handSnap.data() as CardHandFirestoreDoc).cards ?? [];
+        }
+      } catch {
+        // Hand listener will sync
+      }
+    }
+
     this.activeCode = code;
     this.myUid = uid;
     this.callbacks = callbacks;
-    this.latestHand = [];
+    this.latestHand = initialHand;
+    this.latestRoom = activeRoom;
     saveActiveCardRoomCode(uid, code);
     this.attachListeners(code, uid);
 
-    const initialClientState: CardRoomClientState = {
-      code,
-      hostId: uid,
-      selectedGame,
-      phase: 'lobby',
-      createdAt: now,
-      updatedAt: now,
-      settings,
-      players: { [uid]: hostPlayer },
-      playerOrder: [uid],
-      table: null,
-      myHand: [],
+    const clientState: CardRoomClientState = {
+      code: activeRoom.code,
+      hostId: activeRoom.hostId,
+      selectedGame: activeRoom.selectedGame,
+      phase: activeRoom.phase,
+      createdAt: activeRoom.createdAt,
+      updatedAt: activeRoom.updatedAt,
+      settings: activeRoom.settings,
+      players: activeRoom.players,
+      playerOrder: activeRoom.playerOrder,
+      table: activeRoom.table,
+      myHand: activeRoom.phase === 'lobby' ? [] : initialHand,
     };
-    this.latestRoom = {
-      ...initialClientState,
-      playerIds: [uid],
-    };
-    callbacks.onState(initialClientState);
-    return initialClientState;
+    callbacks.onState(clientState);
+    return clientState;
   }
 
   public async joinRoom(
@@ -1236,109 +1303,139 @@ class CardRoomService {
     player: { id: string; name: string; avatar: PlayerAvatar },
     callbacks: CardRoomCallbacks
   ): Promise<CardRoomClientState> {
+    const cleanCode = sanitizeCardRoomCode(rawCode);
+    if (!isValidCardRoomCodeFormat(cleanCode)) {
+      throw new Error('INVALID_CODE');
+    }
+
     this.cleanup();
-    const cleanCode = rawCode.toUpperCase().trim();
     if (!isFirestoreConfigured()) {
       return this.httpJoinRoom(cleanCode, player, callbacks);
     }
 
     if (!auth.currentUser) throw new Error('AUTH_REQUIRED');
+    if (!auth.currentUser.emailVerified) throw new Error('AUTH_UNVERIFIED');
+
     const uid = auth.currentUser.uid;
     const roomPath = `card_rooms/${cleanCode}`;
     const roomRef = doc(firestoreDb, 'card_rooms', cleanCode);
+    const safeName = player.name.trim().slice(0, 20) || 'Player';
+    const safeAvatar = stripUndefined(player.avatar);
+    const now = Date.now();
 
-    let snap;
+    let resolvedRoom: NormalizedCardRoom | null = null;
+
     try {
-      snap = await getDoc(roomRef);
-    } catch (error) {
-      const { code: fbCode } = extractFirebaseError(error);
-      if (fbCode === 'permission-denied') {
-        throw new Error('ROOM_FULL');
-      }
-      handleFirestoreError(error, OperationType.GET, roomPath);
-    }
+      await runTransaction(firestoreDb, async (tx) => {
+        let snap;
+        try {
+          snap = await tx.get(roomRef);
+        } catch (readErr) {
+          const { code: fbCode } = extractFirebaseError(readErr);
+          if (fbCode === 'permission-denied') {
+            throw new Error('ROOM_UNAVAILABLE');
+          }
+          throw readErr;
+        }
 
-    if (!snap.exists()) {
-      throw new Error('ROOM_NOT_FOUND');
-    }
+        if (!snap.exists()) {
+          throw new Error('ROOM_NOT_FOUND');
+        }
 
-    const existing = normalizeCardRoom(snap.data() as CardRoomFirestoreDoc);
-    if (isCardRoomStale(existing)) {
-      deleteDoc(roomRef).catch(() => {});
-      throw new Error('ROOM_NOT_FOUND');
-    }
+        const existing = normalizeCardRoom(snap.data() as CardRoomFirestoreDoc);
+        const decision = decideCardRoomJoinAction(existing, uid, now);
+        if (decision.action === 'reject') {
+          throw new Error(decision.error);
+        }
 
-    const isExistingMember = existing.playerIds.includes(uid);
-    const limits = getCardGamePlayerLimits(existing.selectedGame);
-
-    if (!isExistingMember) {
-      if (existing.phase !== 'lobby') {
-        throw new Error('GAME_IN_PROGRESS');
-      }
-      if (existing.playerIds.length >= limits.max) {
-        throw new Error('ROOM_FULL');
-      }
-
-      const joinedPlayer: CardPlayerPublic = stripUndefined({
-        id: uid,
-        name: player.name,
-        avatar: player.avatar,
-        isHost: existing.hostId === uid,
-        ready: false,
-        connected: true,
-        isMuted: false,
-        joinedAt: Date.now(),
-        cardCount: 0,
-        score: 0,
-        safe: false,
-        saidUno: false,
-      });
-
-      const nextOrder = existing.playerOrder.includes(uid)
-        ? existing.playerOrder
-        : [...existing.playerOrder, uid];
-
-      try {
-        await updateDoc(roomRef, {
-          playerIds: arrayUnion(uid),
-          playerOrder: nextOrder,
-          [`players.${uid}`]: joinedPlayer,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, roomPath);
-      }
-
-      existing.playerIds = [...existing.playerIds, uid];
-      existing.playerOrder = nextOrder;
-      existing.players = { ...existing.players, [uid]: joinedPlayer };
-    } else {
-      try {
-        await updateDoc(roomRef, {
-          [`players.${uid}.connected`]: true,
-          [`players.${uid}.name`]: player.name,
-          [`players.${uid}.avatar`]: stripUndefined(player.avatar),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, roomPath);
-      }
-
-      if (existing.players[uid]) {
-        existing.players = {
-          ...existing.players,
-          [uid]: {
-            ...existing.players[uid],
+        if (decision.action === 'join') {
+          const joinedPlayer: CardPlayerPublic = stripUndefined({
+            id: uid,
+            name: safeName,
+            avatar: safeAvatar,
+            isHost: existing.hostId === uid,
+            ready: false,
             connected: true,
-            name: player.name,
-            avatar: player.avatar,
-          },
-        };
+            isMuted: false,
+            joinedAt: now,
+            cardCount: 0,
+            score: 0,
+            safe: false,
+            saidUno: false,
+          });
+          const nextPlayerIds = existing.playerIds.includes(uid)
+            ? existing.playerIds
+            : [...existing.playerIds, uid];
+          const nextOrder = existing.playerOrder.includes(uid)
+            ? existing.playerOrder
+            : [...existing.playerOrder, uid];
+
+          tx.update(roomRef, {
+            playerIds: nextPlayerIds,
+            playerOrder: nextOrder,
+            [`players.${uid}`]: joinedPlayer,
+            updatedAt: serverTimestamp(),
+          });
+
+          resolvedRoom = {
+            ...existing,
+            playerIds: nextPlayerIds,
+            playerOrder: nextOrder,
+            players: { ...existing.players, [uid]: joinedPlayer },
+            updatedAt: now,
+          };
+        } else {
+          // Idempotent rejoin for existing member (e.g. browser refresh or repeated join click)
+          const updatedMember: CardPlayerPublic = stripUndefined({
+            ...(existing.players[uid] || {
+              id: uid,
+              name: safeName,
+              avatar: safeAvatar,
+              isHost: existing.hostId === uid,
+              ready: false,
+              connected: true,
+              isMuted: false,
+              joinedAt: now,
+              cardCount: 0,
+              score: 0,
+              safe: false,
+              saidUno: false,
+            }),
+            name: safeName,
+            avatar: safeAvatar,
+            connected: true,
+          });
+
+          tx.update(roomRef, {
+            [`players.${uid}.connected`]: true,
+            [`players.${uid}.name`]: safeName,
+            [`players.${uid}.avatar`]: safeAvatar,
+            updatedAt: serverTimestamp(),
+          });
+
+          resolvedRoom = {
+            ...existing,
+            players: { ...existing.players, [uid]: updatedMember },
+            updatedAt: now,
+          };
+        }
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'ROOM_NOT_FOUND' ||
+          error.message === 'ROOM_FULL' ||
+          error.message === 'GAME_IN_PROGRESS' ||
+          error.message === 'ROOM_UNAVAILABLE')
+      ) {
+        throw error;
       }
+      handleFirestoreError(error, OperationType.UPDATE, roomPath);
     }
 
+    const activeRoom = resolvedRoom!;
     let initialHand: CardItem[] = [];
-    if (existing.phase !== 'lobby') {
+    if (activeRoom.phase !== 'lobby') {
       try {
         const handSnap = await getDoc(doc(firestoreDb, 'card_rooms', cleanCode, 'hands', uid));
         if (handSnap.exists()) {
@@ -1352,23 +1449,23 @@ class CardRoomService {
     this.activeCode = cleanCode;
     this.myUid = uid;
     this.callbacks = callbacks;
-    this.latestRoom = existing;
+    this.latestRoom = activeRoom;
     this.latestHand = initialHand;
     saveActiveCardRoomCode(uid, cleanCode);
     this.attachListeners(cleanCode, uid);
 
     const clientState: CardRoomClientState = {
-      code: existing.code,
-      hostId: existing.hostId,
-      selectedGame: existing.selectedGame,
-      phase: existing.phase,
-      createdAt: existing.createdAt,
-      updatedAt: existing.updatedAt,
-      settings: existing.settings,
-      players: existing.players,
-      playerOrder: existing.playerOrder,
-      table: existing.table,
-      myHand: existing.phase === 'lobby' ? [] : initialHand,
+      code: activeRoom.code,
+      hostId: activeRoom.hostId,
+      selectedGame: activeRoom.selectedGame,
+      phase: activeRoom.phase,
+      createdAt: activeRoom.createdAt,
+      updatedAt: activeRoom.updatedAt,
+      settings: activeRoom.settings,
+      players: activeRoom.players,
+      playerOrder: activeRoom.playerOrder,
+      table: activeRoom.table,
+      myHand: activeRoom.phase === 'lobby' ? [] : initialHand,
     };
     callbacks.onState(clientState);
     return clientState;

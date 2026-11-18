@@ -449,6 +449,7 @@ service cloud.firestore {
       allow get: if isVerifiedUser() &&
         isValidRoomCode(roomCode) &&
         (
+          resource == null ||
           request.auth.uid in existing().playerIds ||
           (existing().phase == 'lobby' && existing().playerIds.size() < 2)
         );
@@ -717,6 +718,7 @@ service cloud.firestore {
       allow get: if isVerifiedUser() &&
         isValidRoomCode(roomCode) &&
         (
+          resource == null ||
           request.auth.uid in existing().playerIds ||
           (existing().phase == 'lobby' && existing().playerIds.size() < 8)
         );
