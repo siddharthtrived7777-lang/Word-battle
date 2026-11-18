@@ -348,6 +348,148 @@
         }
       },
       "required": ["ownerId", "title", "words", "category", "language", "difficulty", "assignedBy", "updatedAt"]
+    },
+    "CardRoom": {
+      "title": "CardRoom",
+      "description": "Unified multiplayer Playing Cards room state (UNO, Satyo, Mongoose, Gadha Chor), players public counts/scores, and shared table metadata without exposing private hands.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "hostId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "selectedGame": {
+          "type": "string",
+          "enum": ["uno", "satyo", "mongoose", "gadha_chor"]
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["lobby", "playing", "finished"]
+        },
+        "settings": {
+          "type": "object"
+        },
+        "playerIds": {
+          "type": "array"
+        },
+        "players": {
+          "type": "object"
+        },
+        "playerOrder": {
+          "type": "array"
+        },
+        "table": {
+          "type": "object",
+          "description": "Shared public table state (uppermost discard/stack card, turn tracker, action logs, outcome)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "code",
+        "hostId",
+        "selectedGame",
+        "phase",
+        "settings",
+        "playerIds",
+        "players",
+        "playerOrder",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CardHand": {
+      "title": "CardHand",
+      "description": "Private card hand owned and readable strictly by a single player UID.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "cards": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "cards", "updatedAt"]
+    },
+    "CardDeck": {
+      "title": "CardDeck",
+      "description": "Shared un-dealt draw pile, full UNO discard stack, and Mongoose center stack hidden from room overview.",
+      "type": "object",
+      "properties": {
+        "drawPile": {
+          "type": "array"
+        },
+        "unoDiscard": {
+          "type": "array"
+        },
+        "mongooseStack": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["drawPile", "unoDiscard", "mongooseStack", "updatedAt"]
+    },
+    "CardTransfer": {
+      "title": "CardTransfer",
+      "description": "Ephemeral private card transfer (Gadha Chor blind pick, UNO penalty draw, Mongoose pile push) readable only by sender and recipient.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["gadha_pick", "uno_penalty", "mongoose_pile"]
+        },
+        "cards": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "from", "to", "reason", "cards", "createdAt"]
     }
   },
   "firestore": {
@@ -382,6 +524,26 @@
     "/charades_rooms/{roomCode}/signals/{signalId}": {
       "schema": { "$ref": "#/entities/Signal" },
       "description": "WebRTC live video + voice signaling payloads between Dumb Charades room members."
+    },
+    "/card_rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/CardRoom" },
+      "description": "Active multiplayer Playing Cards rooms (UNO, Satyo, Mongoose, Gadha Chor) keyed by 5-character room code."
+    },
+    "/card_rooms/{roomCode}/hands/{uid}": {
+      "schema": { "$ref": "#/entities/CardHand" },
+      "description": "Player-private hand cards readable strictly by the owning player UID."
+    },
+    "/card_rooms/{roomCode}/deck/{docId}": {
+      "schema": { "$ref": "#/entities/CardDeck" },
+      "description": "Shared draw stockpile and card stacks for active card room rounds."
+    },
+    "/card_rooms/{roomCode}/card_transfers/{transferId}": {
+      "schema": { "$ref": "#/entities/CardTransfer" },
+      "description": "Ephemeral player-to-player card transfers readable only by sender and recipient."
+    },
+    "/card_rooms/{roomCode}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "WebRTC live voice chat signaling payloads between Playing Cards room members."
     }
   }
 }

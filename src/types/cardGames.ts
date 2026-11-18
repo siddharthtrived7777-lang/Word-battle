@@ -174,8 +174,50 @@ export interface CardTablePublicState {
     pairsClearedTotal: number;
     safeOrder: string[];
     oddCardType: 'queen_spades' | 'joker';
+    pendingPick?: {
+      id: string;
+      pickerUid: string;
+      targetUid: string;
+      index: number;
+    } | null;
   };
   outcome: CardGameOutcome | null;
+}
+
+export interface CardDeckFirestoreDoc {
+  drawPile: CardItem[];
+  unoDiscard: UnoCard[];
+  mongooseStack: Array<StandardCard | JokerCard>;
+  updatedAt: unknown;
+}
+
+export interface CardHandFirestoreDoc {
+  ownerId: string;
+  cards: CardItem[];
+  updatedAt: unknown;
+}
+
+export interface CardTransferFirestoreDoc {
+  id: string;
+  from: string;
+  to: string;
+  reason: 'gadha_pick' | 'uno_penalty' | 'mongoose_pile';
+  cards: CardItem[];
+  createdAt: unknown;
+}
+
+export interface CardRoomFirestoreDoc {
+  code: string;
+  hostId: string;
+  selectedGame: CardGameId;
+  phase: CardRoomPhase;
+  settings: CardGameSettingsMap;
+  playerIds: string[];
+  players: Record<string, CardPlayerPublic>;
+  playerOrder: string[];
+  table: CardTablePublicState | null;
+  createdAt: unknown;
+  updatedAt: unknown;
 }
 
 export interface CardRoomClientState {

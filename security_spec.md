@@ -29,3 +29,6 @@
 10. Actor or giver attempting to set `revealedMovie` while `phase != 'revealed'` or smuggle `title` inside `movieMeta`.
 11. Opponent attempting `get` on `/animal_rooms/ABC12/secrets/{uid}`.
 12. Spoofed WebRTC signal sender (`from != request.auth.uid`) or non-member writing `/signals`.
+13. Opponent attempting `get` or `list` on `/card_rooms/ABC12/hands/{otherUid}` or `list` on `/card_rooms/ABC12/deck`.
+14. Non-host player trying to change `selectedGame`, `settings`, or initiate a new round deal in `/card_rooms/ABC12`.
+

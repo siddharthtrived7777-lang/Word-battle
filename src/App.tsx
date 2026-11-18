@@ -207,6 +207,9 @@ export default function App() {
   const resolvingQuestionRef = useRef<string>('');
   const resolvingGuessRef = useRef<string>('');
   const revealingFinishRef = useRef<string>('');
+  const resolvingGadhaPickRef = useRef<string>('');
+  const revealingCardsFinishRef = useRef<string>('');
+  const cardTimeoutKeyRef = useRef<string>('');
 
   useEffect(() => {
     if (!firestoreEnabled) return;
@@ -457,10 +460,74 @@ export default function App() {
       });
   }, [animalRoom, myAnimalSecretId, myId]);
 
+  // Auto-resolve incoming Gadha Chor blind pick from neighbor
+  useEffect(() => {
+    if (
+      !firestoreEnabled ||
+      !cardRoom ||
+      cardRoom.phase !== 'playing' ||
+      cardRoom.selectedGame !== 'gadha_chor'
+    ) {
+      return;
+    }
+    const pending = cardRoom.table?.gadhaChor?.pendingPick;
+    if (!pending || pending.targetUid !== myId) return;
+    if (resolvingGadhaPickRef.current === pending.id) return;
+    resolvingGadhaPickRef.current = pending.id;
+
+    cardRoomService.resolvePendingGadhaPick(cardRoom.code, myId).catch(() => {
+      resolvingGadhaPickRef.current = '';
+    });
+  }, [cardRoom, firestoreEnabled, myId]);
+
+  // Reveal own remaining hand cleanly when a card hand finishes
+  useEffect(() => {
+    if (!firestoreEnabled || !cardRoom || cardRoom.phase !== 'finished') return;
+    if (!cardRoom.table?.outcome) return;
+    if (cardRoom.table.outcome.revealedHands?.[myId]) return;
+    if (cardRoom.myHand.length === 0) return;
+
+    const key = `${cardRoom.code}_${cardRoom.table.roundNumber}_${myId}`;
+    if (revealingCardsFinishRef.current === key) return;
+    revealingCardsFinishRef.current = key;
+
+    cardRoomService.revealHandOnFinish(cardRoom.code, myId).catch(() => {
+      revealingCardsFinishRef.current = '';
+    });
+  }, [cardRoom, firestoreEnabled, myId]);
+
+  // Client-side turn timer auto-advance in Firestore mode
+  useEffect(() => {
+    if (!firestoreEnabled || !cardRoom || cardRoom.phase !== 'playing') return;
+    const table = cardRoom.table;
+    if (!table?.turnDeadlineAt || !table.turnUid) return;
+
+    const isTurnOwner = table.turnUid === myId;
+    const isHost = cardRoom.hostId === myId;
+    if (!isTurnOwner && !isHost) return;
+
+    const key = `${cardRoom.code}_${table.roundNumber}_${table.turnUid}_${table.turnDeadlineAt}`;
+    const delay = Math.max(
+      250,
+      table.turnDeadlineAt - Date.now() + (isTurnOwner ? 200 : 2800)
+    );
+
+    const timer = window.setTimeout(() => {
+      if (cardTimeoutKeyRef.current === key) return;
+      cardTimeoutKeyRef.current = key;
+      cardRoomService.resolveTimedOutTurn(cardRoom.code, myId).catch(() => {
+        cardTimeoutKeyRef.current = '';
+      });
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [cardRoom, firestoreEnabled, myId]);
+
   const handleSignIn = async () => {
     setErrorMsg(null);
     setAnimalErrorMsg(null);
     setCharadesErrorMsg(null);
+    setCardErrorMsg(null);
     setSigningIn(true);
     try {
       await signInWithGoogle();
@@ -469,6 +536,7 @@ export default function App() {
       setErrorMsg(msg);
       setAnimalErrorMsg(msg);
       setCharadesErrorMsg(msg);
+      setCardErrorMsg(msg);
     } finally {
       setSigningIn(false);
     }
@@ -530,6 +598,12 @@ export default function App() {
           return t(lang, 'errConnectionFailed');
         case 'DISCONNECTED':
           return t(lang, 'errDisconnected');
+        case 'NEED_AT_LEAST_2_PLAYERS':
+          return 'At least 2 connected players are needed to deal cards.';
+        case 'MAX_6_PLAYERS':
+          return 'Satyo supports up to 6 players.';
+        case 'MAX_8_PLAYERS':
+          return 'Maximum 8 players allowed in this room.';
         default:
           console.error('Unexpected room error:', code);
           return `${t(lang, 'errConnectionFailed')} (${code})`;
@@ -1165,6 +1239,9 @@ export default function App() {
     setCardRoom(null);
     setRejoinCardRoom(null);
     setCardErrorMsg(null);
+    resolvingGadhaPickRef.current = '';
+    revealingCardsFinishRef.current = '';
+    cardTimeoutKeyRef.current = '';
   };
 
   const playersList = room ? getSortedPlayers(room.players) : [];
@@ -1521,6 +1598,9 @@ export default function App() {
                     await cardRoomService.sendAction(cardRoom.code, myId, action);
                   }}
                   onPlayAgain={async (mode) => {
+                    resolvingGadhaPickRef.current = '';
+                    revealingCardsFinishRef.current = '';
+                    cardTimeoutKeyRef.current = '';
                     await cardRoomService.playAgain(cardRoom.code, myId, mode);
                   }}
                   onLeaveRoom={handleLeaveCardRoom}

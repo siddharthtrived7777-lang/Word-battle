@@ -504,14 +504,17 @@ export const PlayingCardsTableScreen: React.FC<PlayingCardsTableScreenProps> = (
       const gc = table.gadhaChor;
       const targetPlayer = gc.targetUid ? room.players[gc.targetUid] : null;
       const cardIndices = Array.from({ length: gc.targetCardCount }, (_, i) => i);
+      const pickPending = Boolean(gc.pendingPick);
 
       return (
         <div className="flex flex-col items-center justify-center gap-4 py-2 text-center">
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-wider text-[#C5A059] font-semibold">
-              {isMyTurn
-                ? `Pick 1 face-down card from ${targetPlayer?.name || 'Neighbor'}`
-                : `${room.players[table.turnUid || '']?.name || 'Player'} is picking from ${targetPlayer?.name || 'Neighbor'}`}
+              {pickPending
+                ? 'Drawing selected card...'
+                : isMyTurn
+                  ? `Pick 1 face-down card from ${targetPlayer?.name || 'Neighbor'}`
+                  : `${room.players[table.turnUid || '']?.name || 'Player'} is picking from ${targetPlayer?.name || 'Neighbor'}`}
             </p>
             <p className="text-xs font-mono-nums text-[#C9BEA8]">
               Pairs cleared: {gc.pairsClearedTotal} · Avoid keeping{' '}
@@ -527,9 +530,9 @@ export const PlayingCardsTableScreen: React.FC<PlayingCardsTableScreenProps> = (
                   faceDown
                   size="sm"
                   label={`#${idx + 1}`}
-                  disabled={!isMyTurn || actionBusy}
+                  disabled={!isMyTurn || actionBusy || pickPending}
                   onClick={
-                    isMyTurn
+                    isMyTurn && !pickPending
                       ? () => {
                           soundFx.cardFlip();
                           sendSafeAction({ type: 'gadha_pick', index: idx });
