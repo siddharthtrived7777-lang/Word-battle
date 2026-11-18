@@ -8,6 +8,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -17,6 +18,7 @@ import {
 import {
   auth,
   db as firestoreDb,
+  extractFirebaseError,
   handleFirestoreError,
   OperationType,
 } from '../firebase';
@@ -39,6 +41,8 @@ export interface AnimalRoomCallbacks {
   onSignal: (signal: SignalPayload) => void;
 }
 
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
 function stripUndefined<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -49,6 +53,16 @@ function toMillis(val: unknown): number {
     return (val as Timestamp).toMillis();
   }
   return Date.now();
+}
+
+function isAnimalRoomStale(room: AnimalRoomState): boolean {
+  const lastTouch = Math.max(room.updatedAt, room.createdAt);
+  const isExpired = Date.now() - lastTouch > ROOM_TTL_MS;
+  const activePlayers = room.playerIds.filter((pid) => {
+    const p = room.players[pid];
+    return Boolean(p && p.connected !== false);
+  });
+  return isExpired || room.playerIds.length === 0 || activePlayers.length === 0;
 }
 
 function normalizeAnimalRoom(raw: AnimalRoomState): AnimalRoomState {
@@ -123,12 +137,22 @@ class AnimalRoomService {
         where('playerIds', 'array-contains', uid)
       );
       const snap = await getDocs(q);
-      const rooms = snap.docs
-        .map((d) => normalizeAnimalRoom(d.data() as AnimalRoomState))
-        .filter((r) => r.playerIds.includes(uid))
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+      const validRooms: AnimalRoomState[] = [];
 
-      const active = rooms.find((r) => r.phase !== 'finished') ?? rooms[0] ?? null;
+      for (const d of snap.docs) {
+        const room = normalizeAnimalRoom(d.data() as AnimalRoomState);
+        if (isAnimalRoomStale(room)) {
+          deleteDoc(d.ref).catch(() => {});
+          continue;
+        }
+        if (room.playerIds.includes(uid)) {
+          validRooms.push(room);
+        }
+      }
+
+      validRooms.sort((a, b) => b.updatedAt - a.updatedAt);
+
+      const active = validRooms.find((r) => r.phase !== 'finished') ?? validRooms[0] ?? null;
       if (active) {
         saveActiveAnimalRoomCode(uid, active.code);
       } else {
@@ -151,22 +175,7 @@ class AnimalRoomService {
     const uid = auth.currentUser.uid;
     const roomPath = `animal_rooms/${code}`;
     const roomRef = doc(firestoreDb, 'animal_rooms', code);
-
-    let snap;
-    try {
-      snap = await getDoc(roomRef);
-    } catch (error) {
-      // Permission denied on an existing 2-player room means that random code collides
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
-        throw new Error('ROOM_EXISTS');
-      }
-      handleFirestoreError(error, OperationType.GET, roomPath);
-    }
-
-    if (snap.exists()) {
-      throw new Error('ROOM_EXISTS');
-    }
+    const secretRef = doc(firestoreDb, 'animal_rooms', code, 'secrets', uid);
 
     const hostPlayer: AnimalPlayer = stripUndefined({
       ...player,
@@ -194,20 +203,38 @@ class AnimalRoomService {
     };
 
     try {
-      await setDoc(roomRef, payload);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, roomPath);
-    }
+      await runTransaction(firestoreDb, async (tx) => {
+        let snap;
+        try {
+          snap = await tx.get(roomRef);
+        } catch (readErr) {
+          const { code: fbCode } = extractFirebaseError(readErr);
+          if (fbCode === 'permission-denied') {
+            throw new Error('ROOM_EXISTS');
+          }
+          throw readErr;
+        }
 
-    const secretPath = `animal_rooms/${code}/secrets/${uid}`;
-    try {
-      await setDoc(doc(firestoreDb, 'animal_rooms', code, 'secrets', uid), {
-        ownerId: uid,
-        animalId: 'pending',
-        updatedAt: serverTimestamp(),
+        if (snap.exists()) {
+          const existing = normalizeAnimalRoom(snap.data() as AnimalRoomState);
+          if (isAnimalRoomStale(existing)) {
+            tx.delete(roomRef);
+          }
+          throw new Error('ROOM_EXISTS');
+        }
+
+        tx.set(roomRef, payload);
+        tx.set(secretRef, {
+          ownerId: uid,
+          animalId: 'pending',
+          updatedAt: serverTimestamp(),
+        });
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, secretPath);
+      if (error instanceof Error && error.message === 'ROOM_EXISTS') {
+        throw error;
+      }
+      handleFirestoreError(error, OperationType.CREATE, roomPath);
     }
 
     this.currentRoomCode = code;
@@ -234,8 +261,8 @@ class AnimalRoomService {
     try {
       snap = await getDoc(roomRef);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
+      const { code: fbCode } = extractFirebaseError(error);
+      if (fbCode === 'permission-denied') {
         throw new Error('GTA_ROOM_FULL');
       }
       handleFirestoreError(error, OperationType.GET, roomPath);
@@ -246,6 +273,11 @@ class AnimalRoomService {
     }
 
     const existing = normalizeAnimalRoom(snap.data() as AnimalRoomState);
+    if (isAnimalRoomStale(existing)) {
+      deleteDoc(roomRef).catch(() => {});
+      throw new Error('GTA_ROOM_NOT_FOUND');
+    }
+
     const isExistingMember = existing.playerIds.includes(uid);
 
     if (!isExistingMember) {

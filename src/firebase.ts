@@ -23,6 +23,7 @@ export enum OperationType {
 }
 
 export interface FirestoreErrorInfo {
+  code?: string;
   error: string;
   operationType: OperationType;
   path: string | null;
@@ -39,13 +40,43 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function extractFirebaseError(error: unknown): { code: string; message: string } {
+  if (error && typeof error === 'object') {
+    const maybe = error as { code?: unknown; message?: unknown };
+    const message =
+      typeof maybe.message === 'string'
+        ? maybe.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const code = typeof maybe.code === 'string' ? maybe.code : 'unknown';
+
+    // Unwrap serialized FirestoreErrorInfo if already wrapped
+    if (message.startsWith('{') && message.includes('"operationType"')) {
+      try {
+        const parsed = JSON.parse(message) as FirestoreErrorInfo;
+        return {
+          code: parsed.code || code,
+          message: parsed.error || message,
+        };
+      } catch {
+        // Fall through
+      }
+    }
+    return { code, message };
+  }
+  return { code: 'unknown', message: String(error) };
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
 ): never {
+  const { code, message } = extractFirebaseError(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    code,
+    error: message,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,

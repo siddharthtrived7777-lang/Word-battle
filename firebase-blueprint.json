@@ -211,6 +211,143 @@
         }
       },
       "required": ["ownerId", "animalId", "updatedAt"]
+    },
+    "CharadesRoom": {
+      "title": "CharadesRoom",
+      "description": "Multiplayer Bollywood Dumb Charades room state, teams, roles, word progress metadata (no secret title), and scores.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "hostId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "playerIds": {
+          "type": "array"
+        },
+        "players": {
+          "type": "object"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["team", "individual"]
+        },
+        "teamNames": {
+          "type": "object"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["lobby", "selecting_movie", "acting", "revealed", "paused"]
+        },
+        "pausedFromPhase": {
+          "type": "string"
+        },
+        "roundNumber": {
+          "type": "number"
+        },
+        "actingTeam": {
+          "type": "string"
+        },
+        "guessingTeam": {
+          "type": "string"
+        },
+        "actorIds": {
+          "type": "array"
+        },
+        "movieGiverId": {
+          "type": "string"
+        },
+        "guesserIds": {
+          "type": "array"
+        },
+        "movieMeta": {
+          "type": "object",
+          "description": "Public hint metadata (word counts, lengths, completion flags) without the movie title."
+        },
+        "guessFeedback": {
+          "type": "object"
+        },
+        "revealedMovie": {
+          "type": "object",
+          "description": "Null until phase is revealed."
+        },
+        "scores": {
+          "type": "object"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "code",
+        "hostId",
+        "playerIds",
+        "players",
+        "mode",
+        "teamNames",
+        "phase",
+        "roundNumber",
+        "actorIds",
+        "guesserIds",
+        "guessFeedback",
+        "scores",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CharadesPrivateMovie": {
+      "title": "CharadesPrivateMovie",
+      "description": "Private Dumb Charades movie assignment readable strictly by the designated actor or movie giver.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "words": {
+          "type": "array"
+        },
+        "category": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["Easy", "Medium", "Hard"]
+        },
+        "assignedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "title", "words", "category", "language", "difficulty", "assignedBy", "updatedAt"]
     }
   },
   "firestore": {
@@ -233,6 +370,18 @@
     "/animal_rooms/{roomCode}/signals/{signalId}": {
       "schema": { "$ref": "#/entities/Signal" },
       "description": "Optional WebRTC voice signaling payloads between the 2 Guess the Animal players."
+    },
+    "/charades_rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/CharadesRoom" },
+      "description": "Active multiplayer Bollywood Dumb Charades rooms keyed by 5-character room code."
+    },
+    "/charades_rooms/{roomCode}/private_movie/{uid}": {
+      "schema": { "$ref": "#/entities/CharadesPrivateMovie" },
+      "description": "Private movie title & word assignment readable strictly by the recipient UID."
+    },
+    "/charades_rooms/{roomCode}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "WebRTC live video + voice signaling payloads between Dumb Charades room members."
     }
   }
 }

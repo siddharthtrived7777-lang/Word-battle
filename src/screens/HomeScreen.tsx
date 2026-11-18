@@ -202,10 +202,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 type="button"
                 disabled={loadingAction !== null || (firestoreEnabled && !authReady)}
                 onClick={onCreateRoom}
-                className="w-full min-h-[54px] px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-display font-bold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98]"
+                className="w-full min-h-[54px] px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-display font-bold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98]"
               >
                 <Plus className="w-5 h-5 stroke-[2.5]" />
-                <span>{t(lang, 'createRoom')}</span>
+                <span>
+                  {loadingAction === 'create'
+                    ? lang === 'hi'
+                      ? 'रूम बन रहा है...'
+                      : 'Creating Room...'
+                    : t(lang, 'createRoom')}
+                </span>
               </button>
             )}
           </div>

@@ -189,10 +189,16 @@ export const GuessAnimalMenuScreen: React.FC<GuessAnimalMenuScreenProps> = ({
                     type="button"
                     disabled={loadingAction !== null}
                     onClick={onCreateRoom}
-                    className="w-full min-h-[48px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-display font-bold text-sm flex items-center justify-center gap-2 transition-colors"
+                    className="w-full min-h-[48px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-display font-bold text-sm flex items-center justify-center gap-2 transition-colors"
                   >
                     <Plus className="w-4 h-4 stroke-[2.5]" />
-                    <span>{t(lang, 'createRoom')}</span>
+                    <span>
+                      {loadingAction === 'create'
+                        ? lang === 'hi'
+                          ? 'रूम बन रहा है...'
+                          : 'Creating Room...'
+                        : t(lang, 'createRoom')}
+                    </span>
                   </button>
                 </div>
 

@@ -22,6 +22,7 @@ import {
   getDoc,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -57,6 +58,17 @@ function toMillis(val: unknown): number {
     return (val as Timestamp).toMillis();
   }
   return Date.now();
+}
+
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
+function isWordBattleRoomStale(raw: RoomState & { updatedAt?: unknown }): boolean {
+  const lastTouch = Math.max(toMillis(raw.updatedAt ?? raw.createdAt), toMillis(raw.createdAt));
+  const isExpired = Date.now() - lastTouch > ROOM_TTL_MS;
+  const activePlayers = Object.values(raw.players ?? {}).filter(
+    (p) => p && p.connected !== false
+  );
+  return isExpired || activePlayers.length === 0;
 }
 
 function normalizeRoomState(raw: RoomState): RoomState {
@@ -140,17 +152,6 @@ class RoomTransport {
       const roomPath = `rooms/${room.code}`;
       const roomRef = doc(firestoreDb, 'rooms', room.code);
 
-      let snap;
-      try {
-        snap = await getDoc(roomRef);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, roomPath);
-      }
-
-      if (snap.exists()) {
-        throw new Error('ROOM_EXISTS');
-      }
-
       const hostPlayer: Player = stripUndefined({
         ...player,
         id: uid,
@@ -173,8 +174,21 @@ class RoomTransport {
       };
 
       try {
-        await setDoc(roomRef, docPayload);
+        await runTransaction(firestoreDb, async (tx) => {
+          const snap = await tx.get(roomRef);
+          if (snap.exists()) {
+            const rawExisting = snap.data() as RoomState & { updatedAt?: unknown };
+            if (isWordBattleRoomStale(rawExisting)) {
+              tx.delete(roomRef);
+            }
+            throw new Error('ROOM_EXISTS');
+          }
+          tx.set(roomRef, docPayload);
+        });
       } catch (error) {
+        if (error instanceof Error && error.message === 'ROOM_EXISTS') {
+          throw error;
+        }
         handleFirestoreError(error, OperationType.CREATE, roomPath);
       }
 
@@ -228,7 +242,13 @@ class RoomTransport {
         throw new Error('ROOM_NOT_FOUND');
       }
 
-      const existing = normalizeRoomState(snap.data() as RoomState);
+      const rawExisting = snap.data() as RoomState & { updatedAt?: unknown };
+      if (isWordBattleRoomStale(rawExisting)) {
+        deleteDoc(roomRef).catch(() => {});
+        throw new Error('ROOM_NOT_FOUND');
+      }
+
+      const existing = normalizeRoomState(rawExisting);
       const playerCount = Object.keys(existing.players).length;
       if (playerCount >= 10 && !existing.players[uid]) {
         throw new Error('ROOM_FULL');

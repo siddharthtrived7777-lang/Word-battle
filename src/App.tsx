@@ -28,6 +28,13 @@ import {
   AnimalTraitOption,
   QuestionCategoryId,
 } from './types/animalGame';
+import {
+  CharadesDifficulty,
+  CharadesPlayer,
+  CharadesPrivateMovie,
+  CharadesRoomState,
+  CharadesTeamId,
+} from './types/charades';
 import { t } from './data/i18n';
 import {
   computeRoundOutcome,
@@ -43,7 +50,12 @@ import {
   saveActiveAnimalRoomCode,
   saveFlippedIds,
 } from './services/animalRoomService';
+import {
+  charadesRoomService,
+  saveActiveCharadesRoomCode,
+} from './services/charadesRoomService';
 import { useVoiceChat, VoiceTransportAdapter } from './hooks/useVoiceChat';
+import { useCharadesMedia } from './hooks/useCharadesMedia';
 import { soundFx } from './utils/soundFx';
 import { AVATAR_COLORS, AVATAR_EMOJIS } from './components/Avatar';
 import { TopBar } from './components/TopBar';
@@ -59,10 +71,13 @@ import { ResultScreen } from './screens/ResultScreen';
 import { GuessAnimalMenuScreen } from './screens/GuessAnimalMenuScreen';
 import { GuessAnimalLobbyScreen } from './screens/GuessAnimalLobbyScreen';
 import { GuessAnimalGameScreen } from './screens/GuessAnimalGameScreen';
+import { CharadesMenuScreen } from './screens/CharadesMenuScreen';
+import { CharadesLobbyScreen } from './screens/CharadesLobbyScreen';
+import { CharadesGameScreen } from './screens/CharadesGameScreen';
 
 void FIREBASE_CONFIG;
 
-type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal';
+type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal' | 'charades';
 
 function loadStoredProfile() {
   try {
@@ -111,8 +126,17 @@ export default function App() {
     }
   }, []);
 
+  const initialCharadesCode = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get('charades') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    } catch {
+      return '';
+    }
+  }, []);
+
   const [activeGame, setActiveGame] = useState<ActiveHubSection>(() =>
-    initialJoinCode ? 'word_battle' : 'hub'
+    initialCharadesCode ? 'charades' : initialJoinCode ? 'word_battle' : 'hub'
   );
 
   // Word Battle State (preserved identically)
@@ -131,6 +155,15 @@ export default function App() {
     'create' | 'join' | 'rejoin' | null
   >(null);
   const [animalVoiceEnabled, setAnimalVoiceEnabled] = useState(false);
+
+  // Bollywood Dumb Charades State
+  const [charadesRoom, setCharadesRoom] = useState<CharadesRoomState | null>(null);
+  const [myPrivateMovie, setMyPrivateMovie] = useState<CharadesPrivateMovie | null>(null);
+  const [rejoinCharadesRoom, setRejoinCharadesRoom] = useState<CharadesRoomState | null>(null);
+  const [charadesErrorMsg, setCharadesErrorMsg] = useState<string | null>(null);
+  const [charadesLoadingAction, setCharadesLoadingAction] = useState<
+    'create' | 'join' | 'rejoin' | null
+  >(null);
 
   const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
 
@@ -155,10 +188,14 @@ export default function App() {
       if (!user) {
         roomTransport.cleanup();
         animalRoomService.cleanup();
+        charadesRoomService.cleanup();
         setRoom(null);
         setAnimalRoom(null);
         setMyAnimalSecretId(null);
         setRejoinAnimalRoom(null);
+        setCharadesRoom(null);
+        setMyPrivateMovie(null);
+        setRejoinCharadesRoom(null);
       }
     });
     return () => unsub();
@@ -220,6 +257,13 @@ export default function App() {
     }
   };
 
+  // Live video + voice WebRTC mesh for Dumb Charades
+  const charadesMedia = useCharadesMedia(
+    myId,
+    charadesRoom?.code ?? null,
+    charadesRoom?.players
+  );
+
   // Discover active Guess the Animal room to offer rejoin after disconnect
   useEffect(() => {
     if (!firestoreEnabled || !authUser || animalRoom) return;
@@ -241,6 +285,28 @@ export default function App() {
       cancelled = true;
     };
   }, [activeGame, animalRoom, authUser, firestoreEnabled]);
+
+  // Discover active Dumb Charades room to offer rejoin after disconnect
+  useEffect(() => {
+    if (!firestoreEnabled || !authUser || charadesRoom) return;
+    if (activeGame !== 'charades') return;
+
+    let cancelled = false;
+    charadesRoomService
+      .findActiveRejoinRoom(authUser.uid)
+      .then((found) => {
+        if (!cancelled) {
+          setRejoinCharadesRoom(found);
+        }
+      })
+      .catch(() => {
+        // Ignore lookup error
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGame, authUser, charadesRoom, firestoreEnabled]);
 
   // Restore flipped card state when joining/rejoining a Guess the Animal room
   useEffect(() => {
@@ -319,6 +385,7 @@ export default function App() {
   const handleSignIn = async () => {
     setErrorMsg(null);
     setAnimalErrorMsg(null);
+    setCharadesErrorMsg(null);
     setSigningIn(true);
     try {
       await signInWithGoogle();
@@ -326,6 +393,7 @@ export default function App() {
       const msg = err instanceof Error ? err.message : 'Sign-in failed';
       setErrorMsg(msg);
       setAnimalErrorMsg(msg);
+      setCharadesErrorMsg(msg);
     } finally {
       setSigningIn(false);
     }
@@ -336,10 +404,17 @@ export default function App() {
     if (animalRoom) {
       await animalRoomService.leaveRoom(animalRoom.code, myId);
     }
+    if (charadesRoom) {
+      await charadesRoomService.leaveRoom(charadesRoom.code, myId);
+    }
+    charadesMedia.stopAllMedia();
     setRoom(null);
     setAnimalRoom(null);
     setMyAnimalSecretId(null);
     setRejoinAnimalRoom(null);
+    setCharadesRoom(null);
+    setMyPrivateMovie(null);
+    setRejoinCharadesRoom(null);
     await signOutFirebase();
   };
 
@@ -814,6 +889,114 @@ export default function App() {
     });
   };
 
+  // ---------------- Bollywood Dumb Charades Handlers ----------------
+  const buildCharadesPlayer = useCallback(
+    (isHost: boolean): CharadesPlayer => ({
+      id: myId,
+      name: playerName.trim() || authUser?.displayName || 'Player',
+      avatar,
+      isHost,
+      team: isHost ? 'A' : null,
+      connected: true,
+      joinedAt: Date.now(),
+      cameraEnabled: charadesMedia.cameraOn,
+      micEnabled: charadesMedia.micOn,
+      isMuted: !charadesMedia.micOn,
+    }),
+    [
+      authUser?.displayName,
+      avatar,
+      charadesMedia.cameraOn,
+      charadesMedia.micOn,
+      myId,
+      playerName,
+    ]
+  );
+
+  const handleCreateCharadesRoom = async () => {
+    if (firestoreEnabled && !authUser) {
+      setCharadesErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    setCharadesErrorMsg(null);
+    setCharadesLoadingAction('create');
+
+    try {
+      const me = buildCharadesPlayer(true);
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const code = generateRoomCode();
+        try {
+          await charadesRoomService.createRoom(code, me, {
+            onRoomUpdate: setCharadesRoom,
+            onPrivateMovieUpdate: setMyPrivateMovie,
+            onSignal: charadesMedia.handleSignal,
+          });
+          setRejoinCharadesRoom(null);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!(err instanceof Error && err.message === 'ROOM_EXISTS')) {
+            throw err;
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
+      await charadesMedia.startMedia({ wantVideo: true, wantAudio: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setCharadesErrorMsg(mapTransportError(msg));
+    } finally {
+      setCharadesLoadingAction(null);
+    }
+  };
+
+  const handleJoinCharadesRoom = async (
+    rawCode: string,
+    actionType: 'join' | 'rejoin' = 'join'
+  ) => {
+    if (firestoreEnabled && !authUser) {
+      setCharadesErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    const cleanCode = rawCode.toUpperCase().trim();
+    if (cleanCode.length !== 5) {
+      setCharadesErrorMsg(t(lang, 'errInvalidCode'));
+      return;
+    }
+
+    setCharadesErrorMsg(null);
+    setCharadesLoadingAction(actionType);
+
+    try {
+      const me = buildCharadesPlayer(false);
+      await charadesRoomService.joinRoom(cleanCode, me, {
+        onRoomUpdate: setCharadesRoom,
+        onPrivateMovieUpdate: setMyPrivateMovie,
+        onSignal: charadesMedia.handleSignal,
+      });
+      setRejoinCharadesRoom(null);
+      await charadesMedia.startMedia({ wantVideo: true, wantAudio: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setCharadesErrorMsg(mapTransportError(msg));
+    } finally {
+      setCharadesLoadingAction(null);
+    }
+  };
+
+  const handleLeaveCharadesRoom = async () => {
+    if (charadesRoom) {
+      await charadesRoomService.leaveRoom(charadesRoom.code, myId);
+    }
+    charadesMedia.stopAllMedia();
+    setCharadesRoom(null);
+    setMyPrivateMovie(null);
+    setRejoinCharadesRoom(null);
+    setCharadesErrorMsg(null);
+  };
+
   const playersList = room ? getSortedPlayers(room.players) : [];
   const speakingNames = playersList
     .filter((p) => speakingIds[p.id])
@@ -826,37 +1009,49 @@ export default function App() {
         ? room
           ? `wb_${room.phase}`
           : 'wb_home'
-        : animalRoom
-          ? `gta_${animalRoom.phase}`
-          : 'gta_menu';
+        : activeGame === 'guess_animal'
+          ? animalRoom
+            ? `gta_${animalRoom.phase}`
+            : 'gta_menu'
+          : charadesRoom
+            ? `dc_${charadesRoom.phase}`
+            : 'dc_menu';
 
   const topBarTitle =
     activeGame === 'hub'
       ? t(lang, 'hubBrand')
       : activeGame === 'guess_animal'
         ? t(lang, 'gtaTitle')
-        : t(lang, 'appTitle');
+        : activeGame === 'charades'
+          ? t(lang, 'dcTitle')
+          : t(lang, 'appTitle');
 
   const topBarSubtitle =
     activeGame === 'hub'
       ? t(lang, 'hubSubtitle')
       : activeGame === 'guess_animal'
         ? t(lang, 'gtaCardBadge')
-        : t(lang, 'tagline');
+        : activeGame === 'charades'
+          ? t(lang, 'dcBadge')
+          : t(lang, 'tagline');
 
   const activeRoomCode =
     activeGame === 'word_battle'
       ? room?.code
       : activeGame === 'guess_animal'
         ? animalRoom?.code
-        : undefined;
+        : activeGame === 'charades'
+          ? charadesRoom?.code
+          : undefined;
 
   return (
     <div
       className={`min-h-screen flex flex-col ${
         activeGame === 'guess_animal'
           ? 'bg-[#FEF9EC] text-slate-900'
-          : 'bg-[#0B0F17] text-slate-100'
+          : activeGame === 'charades'
+            ? 'bg-[#0E071B] text-slate-100'
+            : 'bg-[#0B0F17] text-slate-100'
       }`}
     >
       <TopBar
@@ -867,10 +1062,11 @@ export default function App() {
         roomCode={activeRoomCode}
         onLeaveRoom={activeGame === 'word_battle' && room ? handleLeaveRoom : undefined}
         onBackToHub={
-          activeGame !== 'hub' && !room && !animalRoom
+          activeGame !== 'hub' && !room && !animalRoom && !charadesRoom
             ? () => {
                 setErrorMsg(null);
                 setAnimalErrorMsg(null);
+                setCharadesErrorMsg(null);
                 setActiveGame('hub');
               }
             : undefined
@@ -903,6 +1099,7 @@ export default function App() {
                 errorMsg={errorMsg}
                 onSelectWordBattle={() => setActiveGame('word_battle')}
                 onSelectGuessAnimal={() => setActiveGame('guess_animal')}
+                onSelectDumbCharades={() => setActiveGame('charades')}
               />
             ) : activeGame === 'word_battle' ? (
               !room ? (
@@ -970,87 +1167,223 @@ export default function App() {
                   onPlayAgain={handlePlayAgain}
                 />
               )
-            ) : !animalRoom ? (
-              <GuessAnimalMenuScreen
+            ) : activeGame === 'guess_animal' ? (
+              !animalRoom ? (
+                <GuessAnimalMenuScreen
+                  lang={lang}
+                  playerName={playerName}
+                  authReady={authReady}
+                  authUser={authUser}
+                  signingIn={signingIn}
+                  onSignIn={handleSignIn}
+                  onCreateRoom={handleCreateAnimalRoom}
+                  onJoinRoom={(code) => handleJoinAnimalRoom(code, 'join')}
+                  onBack={() => {
+                    setAnimalErrorMsg(null);
+                    setActiveGame('hub');
+                  }}
+                  rejoinRoom={rejoinAnimalRoom}
+                  onRejoin={(code) => handleJoinAnimalRoom(code, 'rejoin')}
+                  onDismissRejoin={() => {
+                    if (authUser) saveActiveAnimalRoomCode(authUser.uid, null);
+                    setRejoinAnimalRoom(null);
+                  }}
+                  errorMsg={animalErrorMsg}
+                  loadingAction={animalLoadingAction}
+                />
+              ) : animalRoom.phase === 'lobby' ? (
+                <GuessAnimalLobbyScreen
+                  lang={lang}
+                  room={animalRoom}
+                  myId={myId}
+                  speakingIds={animalVoice.speakingIds}
+                  voiceEnabled={animalVoiceEnabled}
+                  micStatus={animalVoice.micStatus}
+                  isMuted={animalVoice.isMuted}
+                  onToggleVoice={handleToggleAnimalVoice}
+                  onToggleMute={animalVoice.toggleMute}
+                  onStartMatch={() => animalRoomService.startMatch(animalRoom.code, animalRoom)}
+                  onExit={handleExitAnimalRoom}
+                />
+              ) : (
+                <GuessAnimalGameScreen
+                  lang={lang}
+                  room={animalRoom}
+                  myId={myId}
+                  mySecretAnimalId={myAnimalSecretId}
+                  flippedIds={flippedIds}
+                  onToggleFlip={handleToggleFlipAnimal}
+                  onLockSecret={(animalId) =>
+                    animalRoomService.submitSecretAnimal(animalRoom.code, myId, animalId)
+                  }
+                  onAskQuestion={(category: QuestionCategoryId, option: AnimalTraitOption) =>
+                    animalRoomService.askQuestion(
+                      animalRoom.code,
+                      myId,
+                      category,
+                      option,
+                      animalRoom.askedCategoriesThisTurn
+                    )
+                  }
+                  onEndTurn={() =>
+                    animalRoomService.endTurn(
+                      animalRoom.code,
+                      animalRoom.turnUid ?? myId,
+                      animalRoom.playerIds
+                    )
+                  }
+                  onSubmitGuess={(animalId) =>
+                    animalRoomService.submitGuess(animalRoom.code, myId, animalId)
+                  }
+                  onPlayAgain={async () => {
+                    startingPlayingPhaseRef.current = '';
+                    resolvingQuestionRef.current = '';
+                    resolvingGuessRef.current = '';
+                    revealingFinishRef.current = '';
+                    await animalRoomService.playAgain(animalRoom.code, myId, animalRoom);
+                  }}
+                  onExit={handleExitAnimalRoom}
+                  voiceEnabled={animalVoiceEnabled}
+                  micStatus={animalVoice.micStatus}
+                  isMuted={animalVoice.isMuted}
+                  speakingIds={animalVoice.speakingIds}
+                  onToggleVoice={handleToggleAnimalVoice}
+                  onToggleMute={animalVoice.toggleMute}
+                />
+              )
+            ) : !charadesRoom ? (
+              <CharadesMenuScreen
                 lang={lang}
                 playerName={playerName}
+                initialJoinCode={initialCharadesCode}
                 authReady={authReady}
                 authUser={authUser}
                 signingIn={signingIn}
                 onSignIn={handleSignIn}
-                onCreateRoom={handleCreateAnimalRoom}
-                onJoinRoom={(code) => handleJoinAnimalRoom(code, 'join')}
+                onCreateRoom={handleCreateCharadesRoom}
+                onJoinRoom={(code) => handleJoinCharadesRoom(code, 'join')}
                 onBack={() => {
-                  setAnimalErrorMsg(null);
+                  setCharadesErrorMsg(null);
                   setActiveGame('hub');
                 }}
-                rejoinRoom={rejoinAnimalRoom}
-                onRejoin={(code) => handleJoinAnimalRoom(code, 'rejoin')}
+                rejoinRoom={rejoinCharadesRoom}
+                onRejoin={(code) => handleJoinCharadesRoom(code, 'rejoin')}
                 onDismissRejoin={() => {
-                  if (authUser) saveActiveAnimalRoomCode(authUser.uid, null);
-                  setRejoinAnimalRoom(null);
+                  if (authUser) saveActiveCharadesRoomCode(authUser.uid, null);
+                  setRejoinCharadesRoom(null);
                 }}
-                errorMsg={animalErrorMsg}
-                loadingAction={animalLoadingAction}
+                errorMsg={charadesErrorMsg}
+                loadingAction={charadesLoadingAction}
               />
-            ) : animalRoom.phase === 'lobby' ? (
-              <GuessAnimalLobbyScreen
+            ) : charadesRoom.phase === 'lobby' ? (
+              <CharadesLobbyScreen
                 lang={lang}
-                room={animalRoom}
+                room={charadesRoom}
                 myId={myId}
-                speakingIds={animalVoice.speakingIds}
-                voiceEnabled={animalVoiceEnabled}
-                micStatus={animalVoice.micStatus}
-                isMuted={animalVoice.isMuted}
-                onToggleVoice={handleToggleAnimalVoice}
-                onToggleMute={animalVoice.toggleMute}
-                onStartMatch={() => animalRoomService.startMatch(animalRoom.code, animalRoom)}
-                onExit={handleExitAnimalRoom}
+                localStream={charadesMedia.localStream}
+                cameraOn={charadesMedia.cameraOn}
+                micOn={charadesMedia.micOn}
+                camStatus={charadesMedia.camStatus}
+                micStatus={charadesMedia.micStatus}
+                facingMode={charadesMedia.facingMode}
+                turnConfigured={charadesMedia.turnConfigured}
+                mediaNotice={charadesMedia.mediaNotice}
+                speakingIds={charadesMedia.speakingIds}
+                onStartCameraAndMic={async () => {
+                  await charadesMedia.startMedia({ wantVideo: true, wantAudio: true });
+                }}
+                onToggleCamera={charadesMedia.toggleCamera}
+                onToggleMic={charadesMedia.toggleMic}
+                onSwitchCamera={charadesMedia.switchCamera}
+                onUpdateHostPatch={(patch) =>
+                  charadesRoomService.updateHostRoomPatch(charadesRoom.code, patch)
+                }
+                onStartRound={(config) =>
+                  charadesRoomService.startRoundSetup(charadesRoom.code, charadesRoom, config)
+                }
+                onRemoveDisconnected={(targetUid) =>
+                  charadesRoomService.removeDisconnectedPlayer(
+                    charadesRoom.code,
+                    charadesRoom,
+                    targetUid
+                  )
+                }
+                onLeaveRoom={handleLeaveCharadesRoom}
               />
             ) : (
-              <GuessAnimalGameScreen
+              <CharadesGameScreen
                 lang={lang}
-                room={animalRoom}
+                room={charadesRoom}
                 myId={myId}
-                mySecretAnimalId={myAnimalSecretId}
-                flippedIds={flippedIds}
-                onToggleFlip={handleToggleFlipAnimal}
-                onLockSecret={(animalId) =>
-                  animalRoomService.submitSecretAnimal(animalRoom.code, myId, animalId)
-                }
-                onAskQuestion={(category: QuestionCategoryId, option: AnimalTraitOption) =>
-                  animalRoomService.askQuestion(
-                    animalRoom.code,
+                privateMovie={myPrivateMovie}
+                localStream={charadesMedia.localStream}
+                remoteStreams={charadesMedia.remoteStreams}
+                peerStates={charadesMedia.peerStates}
+                speakingIds={charadesMedia.speakingIds}
+                cameraOn={charadesMedia.cameraOn}
+                micOn={charadesMedia.micOn}
+                facingMode={charadesMedia.facingMode}
+                mediaNotice={charadesMedia.mediaNotice}
+                onToggleCamera={charadesMedia.toggleCamera}
+                onToggleMic={charadesMedia.toggleMic}
+                onSwitchCamera={charadesMedia.switchCamera}
+                onAssignMovie={(payload) =>
+                  charadesRoomService.assignMovie(
+                    charadesRoom.code,
                     myId,
-                    category,
-                    option,
-                    animalRoom.askedCategoriesThisTurn
+                    charadesRoom.actorIds,
+                    payload.title,
+                    payload.category,
+                    payload.language,
+                    payload.difficulty,
+                    payload.hintsEnabled
                   )
                 }
-                onEndTurn={() =>
-                  animalRoomService.endTurn(
-                    animalRoom.code,
-                    animalRoom.turnUid ?? myId,
-                    animalRoom.playerIds
+                onUpdateHostPatch={(patch) =>
+                  charadesRoomService.updateHostRoomPatch(charadesRoom.code, patch)
+                }
+                onUpdateMovieMeta={(meta) =>
+                  charadesRoomService.updateMovieMeta(charadesRoom.code, meta)
+                }
+                onMarkWrongGuess={() =>
+                  charadesRoomService.markWrongGuess(
+                    charadesRoom.code,
+                    charadesRoom.guessFeedback.count
                   )
                 }
-                onSubmitGuess={(animalId) =>
-                  animalRoomService.submitGuess(animalRoom.code, myId, animalId)
-                }
-                onPlayAgain={async () => {
-                  startingPlayingPhaseRef.current = '';
-                  resolvingQuestionRef.current = '';
-                  resolvingGuessRef.current = '';
-                  revealingFinishRef.current = '';
-                  await animalRoomService.playAgain(animalRoom.code, myId, animalRoom);
+                onRevealMovie={(options) => {
+                  if (!myPrivateMovie) return Promise.resolve();
+                  return charadesRoomService.revealRoundMovie(
+                    charadesRoom.code,
+                    charadesRoom,
+                    myPrivateMovie,
+                    options
+                  );
                 }}
-                onExit={handleExitAnimalRoom}
-                voiceEnabled={animalVoiceEnabled}
-                micStatus={animalVoice.micStatus}
-                isMuted={animalVoice.isMuted}
-                speakingIds={animalVoice.speakingIds}
-                onToggleVoice={handleToggleAnimalVoice}
-                onToggleMute={animalVoice.toggleMute}
+                onStartRoundSetup={(config) =>
+                  charadesRoomService.startRoundSetup(charadesRoom.code, charadesRoom, config)
+                }
+                onBackToLobby={() =>
+                  charadesRoomService.updateHostRoomPatch(charadesRoom.code, {
+                    phase: 'lobby',
+                    pausedFromPhase: null,
+                    movieMeta: null,
+                    revealedMovie: null,
+                    guessFeedback: { status: 'none', count: 0, updatedAt: Date.now() },
+                  })
+                }
+                onRestartMatch={() =>
+                  charadesRoomService.updateHostRoomPatch(charadesRoom.code, {
+                    phase: 'lobby',
+                    pausedFromPhase: null,
+                    roundNumber: 0,
+                    movieMeta: null,
+                    revealedMovie: null,
+                    guessFeedback: { status: 'none', count: 0, updatedAt: Date.now() },
+                    scores: { teamA: 0, teamB: 0, players: {} },
+                  })
+                }
+                onLeaveRoom={handleLeaveCharadesRoom}
               />
             )}
           </motion.div>
@@ -1062,7 +1395,12 @@ export default function App() {
           activeGame === 'guess_animal'
             ? 'border-t border-amber-200 text-slate-600'
             : 'border-t border-slate-800/60 text-slate-400'
-        } ${activeGame === 'word_battle' && room ? 'pb-24' : ''}`}
+        } ${
+          (activeGame === 'word_battle' && room) ||
+          (activeGame === 'charades' && charadesRoom && charadesRoom.phase !== 'lobby')
+            ? 'pb-24'
+            : ''
+        }`}
       >
         Developed by{' '}
         <span

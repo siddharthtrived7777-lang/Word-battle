@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, LogIn, LogOut, Sparkles, Users } from 'lucide-react';
+import { ArrowRight, Clapperboard, Film, LogIn, LogOut, Sparkles, Users } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Language, PlayerAvatar } from '../types/game';
 import { t } from '../data/i18n';
@@ -20,6 +20,7 @@ interface GameHubScreenProps {
   errorMsg: string | null;
   onSelectWordBattle: () => void;
   onSelectGuessAnimal: () => void;
+  onSelectDumbCharades: () => void;
 }
 
 export const GameHubScreen: React.FC<GameHubScreenProps> = ({
@@ -36,12 +37,13 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
   errorMsg,
   onSelectWordBattle,
   onSelectGuessAnimal,
+  onSelectDumbCharades,
 }) => {
   const firestoreEnabled = isFirestoreConfigured();
   const needsAuth = firestoreEnabled && !authUser;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 sm:py-10 space-y-6">
+    <div className="max-w-6xl mx-auto px-4 py-6 sm:py-10 space-y-6">
       {/* Header & Player Profile Strip */}
       <div className="bg-[#151C2C] border border-slate-800/80 rounded-3xl p-5 sm:p-7">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
@@ -191,8 +193,8 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
         )}
       </div>
 
-      {/* Two Game Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+      {/* Three Game Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
         {/* Card 1: Word Battle */}
         <article className="bg-[#151C2C] border border-slate-800/90 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6">
           <div className="space-y-4">
@@ -262,6 +264,55 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
               type="button"
               onClick={onSelectGuessAnimal}
               className="min-h-[48px] px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-all active:scale-[0.98]"
+            >
+              <span>{t(lang, 'playNow')}</span>
+              <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+          </div>
+        </article>
+
+        {/* Card 3: Bollywood Dumb Charades (Placed AFTER Guess the Animal) */}
+        <article className="md:col-span-2 lg:col-span-1 group relative overflow-hidden bg-gradient-to-br from-[#340E33] via-[#1C0B2E] to-[#11071E] border border-amber-400/45 hover:border-amber-300 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 shadow-2xl transition-all duration-300 hover:-translate-y-1">
+          {/* Spotlight & subtle film sparkle */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-20 -right-16 w-56 h-56 rounded-full bg-amber-400/20 blur-3xl group-hover:bg-amber-400/30 transition-colors"
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-20 -left-16 w-48 h-48 rounded-full bg-rose-600/20 blur-3xl"
+          />
+
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-rose-600 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/25">
+                <Clapperboard className="w-7 h-7" />
+              </div>
+              <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                <Film className="w-3.5 h-3.5" />
+                <span>{t(lang, 'dcBadge')}</span>
+              </span>
+            </div>
+
+            <div>
+              <h2 className="font-display text-2xl font-black text-white tracking-tight">
+                🎬 {t(lang, 'dcTitle')}
+              </h2>
+              <p className="text-sm text-amber-100/85 mt-2 leading-relaxed">
+                {t(lang, 'dcSubtitle')}
+              </p>
+            </div>
+          </div>
+
+          <div className="relative z-10 pt-4 border-t border-white/10 flex items-center justify-between gap-4">
+            <span className="text-xs font-semibold text-amber-200/85 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-amber-400" />
+              <span>2–10 {t(lang, 'playersCount')}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onSelectDumbCharades}
+              className="min-h-[48px] px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:brightness-105 text-slate-950 font-display font-extrabold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98]"
             >
               <span>{t(lang, 'playNow')}</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />

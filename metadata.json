@@ -1,6 +1,6 @@
 {
   "name": "Imposter Word",
   "description": "Mobile-first multiplayer social deduction party game with live voice chat, secret word pairs, and real-time voting.",
-  "requestFramePermissions": ["microphone"],
+  "requestFramePermissions": ["microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

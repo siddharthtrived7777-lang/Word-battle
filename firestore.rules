@@ -144,6 +144,109 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/animal_rooms/$(roomCode)).data.playerIds;
     }
 
+    // 4b. Entity Validation Blueprints (Bollywood Dumb Charades)
+    function isValidCharadesMovieMeta(meta) {
+      return meta is map &&
+        meta.keys().hasAll([
+          'wordCount', 'wordLengths', 'completedWords',
+          'category', 'language', 'difficulty', 'hintsEnabled'
+        ]) &&
+        meta.keys().hasOnly([
+          'wordCount', 'wordLengths', 'completedWords',
+          'category', 'language', 'difficulty', 'hintsEnabled'
+        ]) &&
+        meta.wordCount is number &&
+        meta.wordCount >= 1 &&
+        meta.wordCount <= 20 &&
+        meta.wordLengths is list &&
+        meta.wordLengths.size() <= 20 &&
+        meta.completedWords is list &&
+        meta.completedWords.size() <= 20 &&
+        meta.category is string &&
+        meta.category.size() >= 1 &&
+        meta.category.size() <= 50 &&
+        meta.language is string &&
+        meta.language.size() >= 1 &&
+        meta.language.size() <= 40 &&
+        meta.difficulty in ['Easy', 'Medium', 'Hard'] &&
+        meta.hintsEnabled is bool;
+    }
+
+    function isValidCharadesRoom(data, roomCode) {
+      return data.keys().hasAll([
+          'code', 'hostId', 'playerIds', 'players', 'mode', 'teamNames',
+          'phase', 'roundNumber', 'actorIds', 'guesserIds', 'guessFeedback',
+          'scores', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'code', 'hostId', 'playerIds', 'players', 'mode', 'teamNames',
+          'phase', 'pausedFromPhase', 'roundNumber', 'actingTeam', 'guessingTeam',
+          'actorIds', 'movieGiverId', 'guesserIds', 'movieMeta', 'guessFeedback',
+          'revealedMovie', 'scores', 'createdAt', 'updatedAt'
+        ]) &&
+        data.code == roomCode &&
+        isValidRoomCode(data.code) &&
+        isValidId(data.hostId) &&
+        data.playerIds is list &&
+        data.playerIds.size() <= 10 &&
+        data.players is map &&
+        data.players.size() <= 10 &&
+        data.mode in ['team', 'individual'] &&
+        data.teamNames is map &&
+        data.teamNames.keys().hasAll(['A', 'B']) &&
+        data.teamNames.keys().hasOnly(['A', 'B']) &&
+        data.phase in ['lobby', 'selecting_movie', 'acting', 'revealed', 'paused'] &&
+        (!('pausedFromPhase' in data) || data.pausedFromPhase == null || data.pausedFromPhase in ['lobby', 'selecting_movie', 'acting', 'revealed']) &&
+        data.roundNumber is number &&
+        data.roundNumber >= 0 &&
+        (!('actingTeam' in data) || data.actingTeam == null || data.actingTeam in ['A', 'B']) &&
+        (!('guessingTeam' in data) || data.guessingTeam == null || data.guessingTeam in ['A', 'B']) &&
+        data.actorIds is list &&
+        data.actorIds.size() <= 10 &&
+        (!('movieGiverId' in data) || data.movieGiverId == null || isValidId(data.movieGiverId)) &&
+        data.guesserIds is list &&
+        data.guesserIds.size() <= 10 &&
+        (!('movieMeta' in data) || data.movieMeta == null || isValidCharadesMovieMeta(data.movieMeta)) &&
+        data.guessFeedback is map &&
+        (!('revealedMovie' in data) || data.revealedMovie == null || (data.phase == 'revealed' && data.revealedMovie is map)) &&
+        data.scores is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCharadesPrivateMovie(data, uid) {
+      return data.keys().hasAll([
+          'ownerId', 'title', 'words', 'category', 'language',
+          'difficulty', 'assignedBy', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'title', 'words', 'category', 'language',
+          'difficulty', 'assignedBy', 'updatedAt'
+        ]) &&
+        data.ownerId == uid &&
+        isValidId(data.ownerId) &&
+        data.title is string &&
+        data.title.size() >= 1 &&
+        data.title.size() <= 120 &&
+        data.words is list &&
+        data.words.size() >= 1 &&
+        data.words.size() <= 20 &&
+        data.category is string &&
+        data.language is string &&
+        data.difficulty in ['Easy', 'Medium', 'Hard'] &&
+        isValidId(data.assignedBy) &&
+        data.updatedAt is timestamp;
+    }
+
+    function getCharadesRoom(roomCode) {
+      return get(/databases/$(database)/documents/charades_rooms/$(roomCode));
+    }
+
+    function isCharadesRoomMember(roomCode) {
+      return exists(/databases/$(database)/documents/charades_rooms/$(roomCode)) &&
+        request.auth.uid in getCharadesRoom(roomCode).data.playerIds;
+    }
+
     // 5. Connection Validation Probe
     match /test/connection {
       allow get: if true;
@@ -373,6 +476,156 @@ service cloud.firestore {
           isValidSignal(incoming(), signalId) &&
           incoming().createdAt == request.time &&
           isAnimalRoomMember(roomCode);
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+      }
+    }
+
+    // 8. Bollywood Dumb Charades Collection
+    match /charades_rooms/{roomCode} {
+      allow get: if isVerifiedUser() && isValidRoomCode(roomCode);
+
+      // Allows a disconnected player to query only their own active rooms to rejoin
+      allow list: if isVerifiedUser() &&
+        request.auth.uid in resource.data.playerIds;
+
+      allow create: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidCharadesRoom(incoming(), roomCode) &&
+        incoming().hostId == request.auth.uid &&
+        incoming().phase == 'lobby' &&
+        incoming().playerIds.size() == 1 &&
+        incoming().playerIds[0] == request.auth.uid &&
+        incoming().players.keys().hasOnly([request.auth.uid]) &&
+        (!('revealedMovie' in incoming()) || incoming().revealedMovie == null) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidCharadesRoom(incoming(), roomCode) &&
+        incoming().code == existing().code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Host manages teams, game mode, roles, round transitions, pause/restart
+          (
+            existing().hostId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'hostId', 'playerIds', 'players', 'mode', 'teamNames',
+              'phase', 'pausedFromPhase', 'roundNumber', 'actingTeam', 'guessingTeam',
+              'actorIds', 'movieGiverId', 'guesserIds', 'movieMeta', 'guessFeedback',
+              'revealedMovie', 'scores', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: New player joining room (up to 10 players) adds only self
+          (
+            !(request.auth.uid in existing().playerIds) &&
+            existing().playerIds.size() < 10 &&
+            incoming().playerIds.size() == existing().playerIds.size() + 1 &&
+            incoming().playerIds.hasAll(existing().playerIds) &&
+            request.auth.uid in incoming().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['playerIds', 'players', 'updatedAt']) &&
+            incoming().players.keys().hasAll(existing().players.keys()) &&
+            incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid])
+          ) ||
+          // Action 3: Designated movie giver or actor updates movieMeta, acting phase, guess feedback, or reveal
+          (
+            (
+              request.auth.uid == existing().movieGiverId ||
+              request.auth.uid in existing().actorIds
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'phase', 'movieMeta', 'guessFeedback', 'revealedMovie', 'scores', 'updatedAt'
+            ]) &&
+            incoming().phase in ['selecting_movie', 'acting', 'revealed']
+          ) ||
+          // Action 4: Room member updates own media/presence status, leaves room, or claims host if host left
+          (
+            request.auth.uid in existing().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'playerIds', 'players', 'hostId', 'updatedAt'
+            ]) &&
+            (
+              incoming().players == existing().players ||
+              incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid])
+            ) &&
+            (
+              incoming().hostId == existing().hostId ||
+              (!(existing().hostId in incoming().playerIds) && incoming().hostId == request.auth.uid)
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        (
+          existing().hostId == request.auth.uid ||
+          (existing().playerIds.size() <= 1 && request.auth.uid in existing().playerIds)
+        );
+
+      // Private Movie Assignment — NEVER readable by guessing players or outsiders
+      match /private_movie/{uid} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid &&
+          isCharadesRoomMember(roomCode);
+
+        allow list: if false;
+
+        allow create, update: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          isCharadesRoomMember(roomCode) &&
+          isValidCharadesPrivateMovie(incoming(), uid) &&
+          incoming().assignedBy == request.auth.uid &&
+          incoming().updatedAt == request.time &&
+          (
+            request.auth.uid == getCharadesRoom(roomCode).data.movieGiverId ||
+            (getCharadesRoom(roomCode).data.movieGiverId == null && request.auth.uid == getCharadesRoom(roomCode).data.hostId)
+          ) &&
+          (
+            uid in getCharadesRoom(roomCode).data.actorIds ||
+            uid == request.auth.uid
+          );
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          (
+            request.auth.uid == uid ||
+            (
+              isCharadesRoomMember(roomCode) &&
+              (
+                request.auth.uid == getCharadesRoom(roomCode).data.movieGiverId ||
+                request.auth.uid == getCharadesRoom(roomCode).data.hostId
+              )
+            )
+          );
+      }
+
+      // Live Video + Voice WebRTC Signaling Subcollection
+      match /signals/{signalId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isCharadesRoomMember(roomCode) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+
+        allow list: if isVerifiedUser() &&
+          resource.data.to == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isValidSignal(incoming(), signalId) &&
+          incoming().createdAt == request.time &&
+          isCharadesRoomMember(roomCode);
 
         allow update: if false;
 

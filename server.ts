@@ -191,6 +191,39 @@ async function startServer() {
     res.json({ ok: true, rooms: rooms.size });
   });
 
+  app.get('/api/ice-servers', (_req, res) => {
+    const iceServers: Array<{
+      urls: string | string[];
+      username?: string;
+      credential?: string;
+    }> = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ];
+
+    const rawTurnUrls = (process.env.TURN_URLS || '').trim();
+    const turnUsername = (process.env.TURN_USERNAME || '').trim();
+    const turnCredential = (process.env.TURN_CREDENTIAL || '').trim();
+    const hasTurn = Boolean(rawTurnUrls && turnUsername && turnCredential);
+
+    if (hasTurn) {
+      const urls = rawTurnUrls
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean);
+      if (urls.length > 0) {
+        iceServers.push({
+          urls,
+          username: turnUsername,
+          credential: turnCredential,
+        });
+      }
+    }
+
+    res.json({ iceServers, turnConfigured: hasTurn });
+  });
+
   // HTTP + SSE endpoints (guaranteed to work across all proxies including Cloud Run iframes)
   app.post('/api/rooms', (req, res) => {
     const { room, player } = req.body as { room?: RoomState; player?: Player };

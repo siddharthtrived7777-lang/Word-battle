@@ -8,7 +8,7 @@ import {
   RoundOutcome,
 } from '../types/game';
 
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 export function generateRoomCode(): string {
   let code = '';
