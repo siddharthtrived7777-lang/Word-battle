@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
-import { Copy, Check, Share2, Play, Sliders } from 'lucide-react';
+import { Check, Share2, Play, Sliders, Users } from 'lucide-react';
 import { CategorySelection, GameSettings, Language, RoomState } from '../types/game';
 import { CATEGORIES, getCategoryLabel } from '../data/wordPairs';
 import { t } from '../data/i18n';
-import { Avatar } from '../components/Avatar';
 import { getSortedPlayers } from '../utils/gameLogic';
 
 interface LobbyScreenProps {
   lang: Language;
   room: RoomState;
   myId: string;
-  speakingIds: Record<string, boolean>;
   onUpdateSettings: (settings: GameSettings) => void;
   onStartGame: () => void;
 }
@@ -19,24 +17,15 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   lang,
   room,
   myId,
-  speakingIds,
   onUpdateSettings,
   onStartGame,
 }) => {
-  const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const players = getSortedPlayers(room.players);
   const isHost = room.hostId === myId;
   const canStart = players.length >= 2 && players.length <= 10;
   const canTwoImposters = players.length >= 5;
-
-  const handleCopyCode = () => {
-    navigator.clipboard?.writeText(room.code).then(() => {
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 1800);
-    });
-  };
 
   const handleShareLink = () => {
     const url = `${window.location.origin}${window.location.pathname}?room=${room.code}`;
@@ -51,7 +40,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
     } else {
       navigator.clipboard?.writeText(url).then(() => {
         setCopiedLink(true);
-        setTimeout(() => setCopiedLink(false), 1800);
+        window.setTimeout(() => setCopiedLink(false), 1800);
       });
     }
   };
@@ -73,226 +62,162 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-5 pb-28 space-y-5">
-      {/* Room Code Banner */}
-      <div className="bg-[#151C2C] border border-slate-800/80 rounded-3xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-4">
+      {/* Lobby Top Summary Row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold text-slate-400 mb-1">
-            {t(lang, 'roomCode')}
-          </p>
-          <div className="font-mono-nums text-3xl sm:text-4xl font-bold tracking-[0.22em] text-amber-400">
-            {room.code}
+          <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+            {t(lang, 'roomLobbyTitle')}
+          </h1>
+          <div className="flex items-center gap-2 text-xs text-blue-100/80 mt-0.5">
+            <Users className="w-3.5 h-3.5 text-sky-300" />
+            <span className="font-mono-nums font-semibold">
+              {players.length} / 10 {t(lang, 'playersCount')}
+            </span>
+            {players.length < 2 && (
+              <>
+                <span aria-hidden="true" className="text-blue-200/40">
+                  ·
+                </span>
+                <span className="text-amber-200 font-medium">{t(lang, 'minPlayersNotice')}</span>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={handleCopyCode}
-            className="flex-1 sm:flex-initial min-h-[46px] px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-semibold flex items-center justify-center gap-2 whitespace-nowrap transition-colors active:scale-[0.98]"
-          >
-            {copiedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-            <span>{copiedCode ? t(lang, 'copied') : t(lang, 'copyCode')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleShareLink}
-            className="flex-1 sm:flex-initial min-h-[46px] px-4 rounded-2xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-sm font-semibold flex items-center justify-center gap-2 whitespace-nowrap transition-colors active:scale-[0.98]"
-          >
-            {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
-            <span>{copiedLink ? t(lang, 'linkCopied') : t(lang, 'shareLink')}</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleShareLink}
+          className="min-h-[42px] px-3.5 rounded-2xl bg-white/12 hover:bg-white/20 border border-blue-200/20 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors active:scale-[0.98]"
+        >
+          {copiedLink ? (
+            <Check className="w-3.5 h-3.5 text-emerald-300" />
+          ) : (
+            <Share2 className="w-3.5 h-3.5 text-sky-200" />
+          )}
+          <span>{copiedLink ? t(lang, 'linkCopied') : t(lang, 'shareLink')}</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Players List */}
-        <div className="lg:col-span-6 bg-[#151C2C] border border-slate-800/80 rounded-3xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-lg font-bold text-white">
-              {t(lang, 'playersCount')}
-            </h2>
-            <span className="font-mono-nums text-sm font-bold text-slate-300">
-              {players.length} / 10
-            </span>
-          </div>
-
-          <div className="space-y-2.5">
-            {players.map((p) => {
-              const isMe = p.id === myId;
-              const isSpeaking = Boolean(speakingIds[p.id]);
-              return (
-                <div
-                  key={p.id}
-                  className={`flex items-center justify-between gap-3 p-3 rounded-2xl transition-colors ${
-                    isMe ? 'bg-slate-800/70' : 'bg-[#0B0F17]/70'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Avatar
-                      name={p.name}
-                      avatar={p.avatar}
-                      size="md"
-                      isHost={p.id === room.hostId}
-                      isMuted={p.isMuted}
-                      isSpeaking={isSpeaking}
-                    />
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-white truncate">
-                        {p.name}
-                      </div>
-                      <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                        {p.id === room.hostId && (
-                          <span className="text-amber-400 font-medium">{t(lang, 'hostLabel')}</span>
-                        )}
-                        {p.id === room.hostId && isMe && <span aria-hidden="true">·</span>}
-                        {isMe && <span>{t(lang, 'youLabel')}</span>}
-                        {!isMe && p.id !== room.hostId && (
-                          <span>{isSpeaking ? t(lang, 'speakingNow') : 'Voice ready'}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {p.score > 0 && (
-                    <span className="font-mono-nums text-xs font-bold text-amber-300 shrink-0">
-                      {p.score} {t(lang, 'pointsUnit')}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {players.length < 2 && (
-            <p className="mt-4 text-xs text-amber-300/90 font-medium">
-              {t(lang, 'minPlayersNotice')}
-            </p>
-          )}
+      {/* Host Settings Panel */}
+      <div className="bg-[#0E246E]/55 border border-blue-200/18 rounded-2xl p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Sliders className="w-4 h-4 text-sky-300" />
+          <h2 className="font-display text-sm font-bold text-white uppercase tracking-wider">
+            {t(lang, 'gameSettings')}
+          </h2>
         </div>
 
-        {/* Host Settings + Start Action */}
-        <div className="lg:col-span-6 space-y-5">
-          <div className="bg-[#151C2C] border border-slate-800/80 rounded-3xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Sliders className="w-4 h-4 text-amber-400" />
-              <h2 className="font-display text-lg font-bold text-white">
-                {t(lang, 'gameSettings')}
-              </h2>
-            </div>
-
-            {/* Category Selection */}
-            <div className="mb-5">
-              <span className="block text-xs font-semibold text-slate-400 mb-2">
-                {t(lang, 'categoryLabel')}
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={!isHost}
-                  onClick={() => updateCategory('random')}
-                  className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
-                    room.settings.category === 'random'
-                      ? 'bg-amber-500 text-slate-950'
-                      : 'bg-[#0B0F17] text-slate-300 hover:bg-slate-800 disabled:opacity-70'
-                  }`}
-                >
-                  {getCategoryLabel('random', lang)}
-                </button>
-                {CATEGORIES.map((cat) => (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    disabled={!isHost}
-                    onClick={() => updateCategory(cat.id)}
-                    className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
-                      room.settings.category === cat.id
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'bg-[#0B0F17] text-slate-300 hover:bg-slate-800 disabled:opacity-70'
-                    }`}
-                  >
-                    {cat[lang]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Rounds & Imposters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <span className="block text-xs font-semibold text-slate-400 mb-2">
-                  {t(lang, 'roundsLabel')}
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  {([3, 4, 5] as const).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      disabled={!isHost}
-                      onClick={() => updateRounds(r)}
-                      className={`min-h-[44px] rounded-xl font-mono-nums text-sm font-bold transition-colors ${
-                        room.settings.rounds === r
-                          ? 'bg-amber-500 text-slate-950'
-                          : 'bg-[#0B0F17] text-slate-300 hover:bg-slate-800 disabled:opacity-70'
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="block text-xs font-semibold text-slate-400 mb-2">
-                  {t(lang, 'impostersLabel')}
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  {([1, 2] as const).map((count) => {
-                    const locked = count === 2 && !canTwoImposters;
-                    return (
-                      <button
-                        key={count}
-                        type="button"
-                        disabled={!isHost || locked}
-                        onClick={() => updateImposters(count)}
-                        className={`min-h-[44px] rounded-xl font-mono-nums text-sm font-bold transition-colors ${
-                          room.settings.imposterCount === count && !locked
-                            ? 'bg-amber-500 text-slate-950'
-                            : 'bg-[#0B0F17] text-slate-300 hover:bg-slate-800 disabled:opacity-40'
-                        }`}
-                      >
-                        {count}
-                      </button>
-                    );
-                  })}
-                </div>
-                {!canTwoImposters && (
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    {t(lang, 'imposterMinPlayers')}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {isHost ? (
+        {/* Category Selection */}
+        <div>
+          <span className="block text-xs font-semibold text-blue-100/75 mb-2">
+            {t(lang, 'categoryLabel')}
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <button
               type="button"
-              disabled={!canStart}
-              onClick={onStartGame}
-              className="w-full min-h-[56px] px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-display font-bold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
+              disabled={!isHost}
+              onClick={() => updateCategory('random')}
+              className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
+                room.settings.category === 'random'
+                  ? 'bg-white text-[#091A54] shadow-sm'
+                  : 'bg-white/8 text-blue-100 hover:bg-white/15 disabled:opacity-75'
+              }`}
             >
-              <Play className="w-5 h-5 fill-current" />
-              <span>{t(lang, 'startGame')}</span>
+              {getCategoryLabel('random', lang)}
             </button>
-          ) : (
-            <div className="p-4 rounded-2xl bg-[#151C2C] border border-slate-800/80 text-center text-sm text-slate-400 font-medium">
-              {t(lang, 'waitingForHost')}
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                disabled={!isHost}
+                onClick={() => updateCategory(cat.id)}
+                className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-semibold text-left truncate transition-colors ${
+                  room.settings.category === cat.id
+                    ? 'bg-white text-[#091A54] shadow-sm'
+                    : 'bg-white/8 text-blue-100 hover:bg-white/15 disabled:opacity-75'
+                }`}
+              >
+                {cat[lang]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Rounds & Imposters */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <span className="block text-xs font-semibold text-blue-100/75 mb-2">
+              {t(lang, 'roundsLabel')}
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              {([3, 4, 5] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  disabled={!isHost}
+                  onClick={() => updateRounds(r)}
+                  className={`min-h-[42px] rounded-xl font-mono-nums text-sm font-bold transition-colors ${
+                    room.settings.rounds === r
+                      ? 'bg-white text-[#091A54] shadow-sm'
+                      : 'bg-white/8 text-blue-100 hover:bg-white/15 disabled:opacity-75'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+
+          <div>
+            <span className="block text-xs font-semibold text-blue-100/75 mb-2">
+              {t(lang, 'impostersLabel')}
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              {([1, 2] as const).map((count) => {
+                const locked = count === 2 && !canTwoImposters;
+                return (
+                  <button
+                    key={count}
+                    type="button"
+                    disabled={!isHost || locked}
+                    onClick={() => updateImposters(count)}
+                    className={`min-h-[42px] rounded-xl font-mono-nums text-sm font-bold transition-colors ${
+                      room.settings.imposterCount === count && !locked
+                        ? 'bg-white text-[#091A54] shadow-sm'
+                        : 'bg-white/8 text-blue-100 hover:bg-white/15 disabled:opacity-40'
+                    }`}
+                  >
+                    {count}
+                  </button>
+                );
+              })}
+            </div>
+            {!canTwoImposters && (
+              <p className="text-[11px] text-blue-200/70 mt-1.5">
+                {t(lang, 'imposterMinPlayers')}
+              </p>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Start Game CTA */}
+      {isHost ? (
+        <button
+          type="button"
+          disabled={!canStart}
+          onClick={onStartGame}
+          className="w-full min-h-[52px] px-6 rounded-2xl bg-emerald-400 hover:bg-emerald-300 disabled:bg-white/10 disabled:text-blue-200/50 text-[#07184A] font-display font-extrabold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-400/20 transition-all active:scale-[0.98]"
+        >
+          <Play className="w-5 h-5 fill-current" />
+          <span>{t(lang, 'startGame')}</span>
+        </button>
+      ) : (
+        <div className="p-3.5 rounded-2xl bg-[#0E246E]/55 border border-blue-200/15 text-center text-sm text-blue-100/85 font-medium">
+          {t(lang, 'waitingForHost')}
+        </div>
+      )}
     </div>
   );
 };

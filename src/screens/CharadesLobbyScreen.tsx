@@ -20,12 +20,14 @@ import {
 import {
   CharadesMode,
   CharadesPlayer,
+  CharadesReactionEvent,
   CharadesRoomState,
   CharadesTeamId,
 } from '../types/charades';
 import { Language } from '../types/game';
 import { t } from '../data/i18n';
 import { Avatar } from '../components/Avatar';
+import { CharadesReactionOverlay } from '../components/CharadesReactionOverlay';
 import { MediaPermissionState } from '../hooks/useCharadesMedia';
 
 interface CharadesLobbyScreenProps {
@@ -41,6 +43,7 @@ interface CharadesLobbyScreenProps {
   turnConfigured: boolean;
   mediaNotice: string | null;
   speakingIds: Record<string, boolean>;
+  reactions?: CharadesReactionEvent[];
   onStartCameraAndMic: () => Promise<void>;
   onToggleCamera: () => Promise<void>;
   onToggleMic: () => Promise<void>;
@@ -70,6 +73,7 @@ export const CharadesLobbyScreen: React.FC<CharadesLobbyScreenProps> = ({
   turnConfigured,
   mediaNotice,
   speakingIds,
+  reactions = [],
   onStartCameraAndMic,
   onToggleCamera,
   onToggleMic,
@@ -325,6 +329,14 @@ export const CharadesLobbyScreen: React.FC<CharadesLobbyScreenProps> = ({
                 </p>
               </div>
             )}
+            <CharadesReactionOverlay
+              reactions={reactions.filter((rx) => rx.senderId === myId)}
+              variant="tile"
+            />
+            <CharadesReactionOverlay
+              reactions={reactions.filter((rx) => rx.senderId !== myId)}
+              variant="corner"
+            />
           </div>
 
           {mediaNotice && (

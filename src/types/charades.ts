@@ -12,6 +12,7 @@ export type CharadesPhase =
 export type CharadesCategory =
   | 'Bollywood Classics'
   | 'Modern Bollywood'
+  | 'Dhollywood'
   | 'Comedy'
   | 'Romantic'
   | 'Action'
@@ -124,3 +125,14 @@ export interface CharadesRoomState {
   createdAt: number;
   updatedAt: number;
 }
+
+export type CharadesReactionType = 'heart' | 'thumbs_up' | 'peace';
+
+export interface CharadesReactionEvent {
+  id: string;
+  senderId: string;
+  senderName: string;
+  gesture: CharadesReactionType;
+  timestamp: number;
+}
+

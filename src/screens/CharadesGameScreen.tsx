@@ -26,6 +26,7 @@ import {
   CharadesDifficulty,
   CharadesPlayer,
   CharadesPrivateMovie,
+  CharadesReactionEvent,
   CharadesRoomState,
   CharadesTeamId,
 } from '../types/charades';
@@ -46,6 +47,7 @@ interface CharadesGameScreenProps {
   remoteStreams: Record<string, MediaStream>;
   peerStates: Record<string, RTCPeerConnectionState>;
   speakingIds: Record<string, boolean>;
+  reactions?: CharadesReactionEvent[];
   cameraOn: boolean;
   micOn: boolean;
   facingMode: 'user' | 'environment';
@@ -90,6 +92,7 @@ export const CharadesGameScreen: React.FC<CharadesGameScreenProps> = ({
   remoteStreams,
   peerStates,
   speakingIds,
+  reactions = [],
   cameraOn,
   micOn,
   facingMode,
@@ -439,6 +442,7 @@ export const CharadesGameScreen: React.FC<CharadesGameScreenProps> = ({
               remoteStreams={remoteStreams}
               peerStates={peerStates}
               speakingIds={speakingIds}
+              reactions={reactions}
               cameraOn={cameraOn}
               facingMode={facingMode}
               layoutMode="all"
@@ -463,6 +467,7 @@ export const CharadesGameScreen: React.FC<CharadesGameScreenProps> = ({
               remoteStreams={remoteStreams}
               peerStates={peerStates}
               speakingIds={speakingIds}
+              reactions={reactions}
               cameraOn={cameraOn}
               facingMode={facingMode}
               layoutMode={layoutMode}
@@ -764,6 +769,7 @@ export const CharadesGameScreen: React.FC<CharadesGameScreenProps> = ({
             remoteStreams={remoteStreams}
             peerStates={peerStates}
             speakingIds={speakingIds}
+            reactions={reactions}
             cameraOn={cameraOn}
             facingMode={facingMode}
             layoutMode="all"

@@ -213,7 +213,11 @@ export const CharadesMovieSelector: React.FC<CharadesMovieSelectorProps> = ({
           }`}
         >
           <Film className="w-4 h-4" />
-          <span>{lang === 'hi' ? 'मूवी लाइब्रेरी (115+)' : 'Movie Library (115+)'}</span>
+          <span>
+            {lang === 'hi'
+              ? `मूवी लाइब्रेरी (${CHARADES_MOVIES.length})`
+              : `Movie Library (${CHARADES_MOVIES.length})`}
+          </span>
         </button>
         <button
           type="button"
@@ -241,8 +245,8 @@ export const CharadesMovieSelector: React.FC<CharadesMovieSelectorProps> = ({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={
                   lang === 'hi'
-                    ? 'मूवी नाम, भाषा या कैटेगरी खोजें...'
-                    : 'Search Bollywood, Regional, or Hollywood movies...'
+                    ? 'बॉलीवुड, डॉलीवुड, भाषा या कैटेगरी खोजें...'
+                    : 'Search Bollywood, Dhollywood, Regional, or Hollywood...'
                 }
                 className="w-full h-11 pl-10 pr-4 rounded-xl bg-black/40 border border-white/15 text-sm text-white placeholder:text-amber-100/40 focus:outline-none focus:border-amber-400"
               />

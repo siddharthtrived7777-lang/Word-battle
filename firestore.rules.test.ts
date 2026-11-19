@@ -96,10 +96,43 @@ export const DIRTY_DOZEN_PAYLOADS = [
     data: { id: 'sig1', from: 'u1', to: 'u2', type: 'offer' },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '13. Spoofed senderId or disallowed gesture payload in charades reactions',
+    auth: { uid: 'u2', email_verified: true },
+    operation: 'create',
+    path: 'charades_rooms/ABC12/reactions/react1',
+    data: { id: 'react1', senderId: 'u1', senderName: 'Fake', gesture: 'frame_data', recipientIds: ['u1', 'u2'] },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '14. Guesser reading active drawer secret word in draw_rooms',
+    auth: { uid: 'u2', email_verified: true },
+    operation: 'get',
+    path: 'draw_rooms/ABC12/secrets/u1',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '15. Non-drawer writing canvas strokes in draw_rooms',
+    auth: { uid: 'u2', email_verified: true },
+    operation: 'create',
+    path: 'draw_rooms/ABC12/strokes/s1',
+    data: { id: 's1', drawerUid: 'u2', tool: 'pen', color: '#000000', size: 6, points: [10, 10, 20, 20] },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '16. Smuggling revealedWord during active drawing phase in draw_rooms',
+    auth: { uid: 'u1', email_verified: true },
+    operation: 'update',
+    path: 'draw_rooms/ABC12',
+    data: { phase: 'drawing', turn: { revealedWord: 'Samosa' } },
+    expected: 'PERMISSION_DENIED',
+  },
 ];
 
 describe('Party Arcade Dirty Dozen Security Spec', () => {
-  it('defines all 12 adversarial payloads', () => {
-    assert.equal(DIRTY_DOZEN_PAYLOADS.length, 12);
+  it('defines all adversarial payloads', () => {
+    assert.equal(DIRTY_DOZEN_PAYLOADS.length, 16);
   });
 });
+
+

@@ -349,6 +349,46 @@
       },
       "required": ["ownerId", "title", "words", "category", "language", "difficulty", "assignedBy", "updatedAt"]
     },
+    "CharadesReaction": {
+      "title": "CharadesReaction",
+      "description": "Ephemeral hand gesture reaction event (heart, thumbs_up, peace) broadcast to room members without transmitting any camera frames or landmarks.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "gesture": {
+          "type": "string",
+          "enum": ["heart", "thumbs_up", "peace"]
+        },
+        "recipientIds": {
+          "type": "array",
+          "description": "Room member UIDs permitted to receive this reaction event (max 10)"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "senderId", "senderName", "gesture", "recipientIds", "timestamp", "createdAt"]
+    },
     "CardRoom": {
       "title": "CardRoom",
       "description": "Unified multiplayer Playing Cards room state (UNO, Satyo, Mongoose, Gadha Chor), players public counts/scores, and shared table metadata without exposing private hands.",
@@ -456,7 +496,7 @@
     },
     "CardTransfer": {
       "title": "CardTransfer",
-      "description": "Ephemeral private card transfer (Gadha Chor blind pick, UNO penalty draw, Mongoose pile push) readable only by sender and recipient.",
+          "description": "Ephemeral private card transfer (Gadha Chor blind pick, UNO penalty draw, Mongoose pile push) readable only by sender and recipient.",
       "type": "object",
       "properties": {
         "id": {
@@ -490,6 +530,221 @@
         }
       },
       "required": ["id", "from", "to", "reason", "cards", "createdAt"]
+    },
+    "DrawRoom": {
+      "title": "DrawRoom",
+      "description": "Multiplayer Draw & Guess room state, settings, players, scores, and active turn metadata without exposing the secret word.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "hostId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["lobby", "choosing_word", "drawing", "turn_reveal", "finished"]
+        },
+        "settings": {
+          "type": "object"
+        },
+        "playerIds": {
+          "type": "array"
+        },
+        "players": {
+          "type": "object"
+        },
+        "usedWords": {
+          "type": "array"
+        },
+        "turn": {
+          "type": "object",
+          "description": "Public turn metadata (drawerUid, hintMask, salted wordHash, closeHashes, guessedBy, canvasVersion, revealedWord null until turn_reveal/finished)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "code",
+        "hostId",
+        "phase",
+        "settings",
+        "playerIds",
+        "players",
+        "usedWords",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DrawSecret": {
+      "title": "DrawSecret",
+      "description": "Drawer-private secret word and word choices readable strictly by the active drawer UID.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "turnKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "word": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "choices": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "turnKey", "word", "choices", "updatedAt"]
+    },
+    "DrawStroke": {
+      "title": "DrawStroke",
+      "description": "Real-time drawing stroke or flood-fill action created by the active drawer and scoped to current room members.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "turnKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "canvasVersion": {
+          "type": "number"
+        },
+        "drawerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "seq": {
+          "type": "number"
+        },
+        "tool": {
+          "type": "string",
+          "enum": ["pen", "eraser", "fill"]
+        },
+        "color": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "size": {
+          "type": "number"
+        },
+        "points": {
+          "type": "array"
+        },
+        "recipientIds": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "turnKey",
+        "canvasVersion",
+        "drawerUid",
+        "seq",
+        "tool",
+        "color",
+        "size",
+        "points",
+        "recipientIds",
+        "createdAt"
+      ]
+    },
+    "DrawMessage": {
+      "title": "DrawMessage",
+      "description": "Live guess chat and correct-guess celebration message scoped to room members.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "turnKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["guess", "correct", "system"]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "points": {
+          "type": "number"
+        },
+        "recipientIds": {
+          "type": "array"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "turnKey",
+        "senderId",
+        "senderName",
+        "kind",
+        "text",
+        "recipientIds",
+        "timestamp",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -525,6 +780,10 @@
       "schema": { "$ref": "#/entities/Signal" },
       "description": "WebRTC live video + voice signaling payloads between Dumb Charades room members."
     },
+    "/charades_rooms/{roomCode}/reactions/{reactionId}": {
+      "schema": { "$ref": "#/entities/CharadesReaction" },
+      "description": "Ephemeral hand gesture reaction events broadcast between Dumb Charades room members."
+    },
     "/card_rooms/{roomCode}": {
       "schema": { "$ref": "#/entities/CardRoom" },
       "description": "Active multiplayer Playing Cards rooms (UNO, Satyo, Mongoose, Gadha Chor) keyed by 5-character room code."
@@ -544,6 +803,26 @@
     "/card_rooms/{roomCode}/signals/{signalId}": {
       "schema": { "$ref": "#/entities/Signal" },
       "description": "WebRTC live voice chat signaling payloads between Playing Cards room members."
+    },
+    "/draw_rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/DrawRoom" },
+      "description": "Active multiplayer Draw & Guess rooms keyed by 5-character room code."
+    },
+    "/draw_rooms/{roomCode}/secrets/{uid}": {
+      "schema": { "$ref": "#/entities/DrawSecret" },
+      "description": "Drawer-private secret word and word choices readable strictly by the active drawer UID."
+    },
+    "/draw_rooms/{roomCode}/strokes/{strokeId}": {
+      "schema": { "$ref": "#/entities/DrawStroke" },
+      "description": "Real-time drawing strokes created by the active drawer and readable by room members."
+    },
+    "/draw_rooms/{roomCode}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/DrawMessage" },
+      "description": "Real-time guess chat and correct-guess celebration events scoped to room members."
+    },
+    "/draw_rooms/{roomCode}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/Signal" },
+      "description": "Optional WebRTC live voice chat signaling payloads between Draw & Guess room members."
     }
   }
 }

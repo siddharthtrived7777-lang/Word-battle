@@ -1,9 +1,9 @@
 import React from 'react';
-import { ArrowRight, Clapperboard, Film, LogIn, LogOut, Spade, Sparkles, Users } from 'lucide-react';
+import { ArrowRight, Clapperboard, Film, LogIn, LogOut, Palette, Spade, Sparkles, Users } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { Language, PlayerAvatar } from '../types/game';
 import { t } from '../data/i18n';
-import { AVATAR_COLORS, AVATAR_EMOJIS, Avatar } from '../components/Avatar';
+import { AVATAR_COLORS, Avatar } from '../components/Avatar';
 import { isFirestoreConfigured } from '../firebase';
 
 interface GameHubScreenProps {
@@ -22,6 +22,7 @@ interface GameHubScreenProps {
   onSelectGuessAnimal: () => void;
   onSelectDumbCharades: () => void;
   onSelectPlayingCards: () => void;
+  onSelectDrawGuess: () => void;
 }
 
 export const GameHubScreen: React.FC<GameHubScreenProps> = ({
@@ -40,6 +41,7 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
   onSelectGuessAnimal,
   onSelectDumbCharades,
   onSelectPlayingCards,
+  onSelectDrawGuess,
 }) => {
   const firestoreEnabled = isFirestoreConfigured();
   const needsAuth = firestoreEnabled && !authUser;
@@ -119,65 +121,22 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
           <div className="md:col-span-7">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-slate-300">{t(lang, 'chooseAvatar')}</span>
-              <div className="inline-flex items-center p-0.5 rounded-xl bg-[#0B0F17] border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setAvatar({ ...avatar, type: 'emoji' })}
-                  className={`min-h-[30px] px-3 rounded-lg text-xs font-semibold transition-colors ${
-                    avatar.type === 'emoji'
-                      ? 'bg-slate-800 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {t(lang, 'emojiMode')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAvatar({ ...avatar, type: 'initials' })}
-                  className={`min-h-[30px] px-3 rounded-lg text-xs font-semibold transition-colors ${
-                    avatar.type === 'initials'
-                      ? 'bg-slate-800 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {t(lang, 'initialsMode')}
-                </button>
-              </div>
             </div>
 
-            {avatar.type === 'emoji' ? (
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                {AVATAR_EMOJIS.map((em) => (
-                  <button
-                    key={em}
-                    type="button"
-                    onClick={() => setAvatar({ ...avatar, emoji: em })}
-                    className={`min-h-[42px] min-w-[42px] rounded-xl text-lg flex items-center justify-center shrink-0 transition-all active:scale-95 ${
-                      avatar.emoji === em
-                        ? 'bg-amber-500/20 ring-2 ring-amber-400'
-                        : 'bg-[#0B0F17] hover:bg-slate-800'
-                    }`}
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {AVATAR_COLORS.map((col) => (
-                  <button
-                    key={col}
-                    type="button"
-                    onClick={() => setAvatar({ ...avatar, color: col })}
-                    className={`min-h-[42px] min-w-[42px] rounded-xl shrink-0 transition-all active:scale-95 ${
-                      avatar.color === col ? 'ring-2 ring-white scale-105' : 'opacity-80 hover:opacity-100'
-                    }`}
-                    style={{ backgroundColor: col }}
-                    aria-label={`Color ${col}`}
-                  />
-                ))}
-              </div>
-            )}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {AVATAR_COLORS.map((col) => (
+                <button
+                  key={col}
+                  type="button"
+                  onClick={() => setAvatar({ type: 'initials', color: col })}
+                  className={`min-h-[42px] min-w-[42px] rounded-xl shrink-0 transition-all active:scale-95 ${
+                    avatar.color === col ? 'ring-2 ring-white scale-105' : 'opacity-80 hover:opacity-100'
+                  }`}
+                  style={{ backgroundColor: col }}
+                  aria-label={`Color ${col}`}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
@@ -235,37 +194,37 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
           </div>
         </article>
 
-        {/* Card 2: Guess the Animal (Bright & Friendly Palette) */}
-        <article className="bg-gradient-to-br from-[#FFFDF7] to-[#FEF3C7] border-2 border-amber-300 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 text-slate-900 shadow-lg">
+        {/* Card 2: Guess the Animal (Balanced Emerald Safari Palette) */}
+        <article className="bg-gradient-to-br from-[#152822] via-[#12201C] to-[#1A1D15] border border-emerald-500/35 hover:border-emerald-400/55 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 text-white shadow-lg transition-colors">
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-100 border-2 border-emerald-300 flex items-center justify-center text-3xl">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-400/35 flex items-center justify-center text-3xl">
                 🦒
               </div>
-              <span className="text-xs font-semibold text-amber-900">
+              <span className="text-xs font-semibold text-amber-300">
                 {t(lang, 'gtaCardBadge')}
               </span>
             </div>
 
             <div>
-              <h2 className="font-display text-2xl font-extrabold text-slate-900 tracking-tight">
+              <h2 className="font-display text-2xl font-extrabold text-white tracking-tight">
                 {t(lang, 'gtaTitle')}
               </h2>
-              <p className="text-sm text-slate-700 mt-2 leading-relaxed">
+              <p className="text-sm text-emerald-100/80 mt-2 leading-relaxed">
                 {t(lang, 'gtaDesc')}
               </p>
             </div>
           </div>
 
-          <div className="pt-4 border-t border-amber-200/80 flex items-center justify-between gap-4">
-            <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-emerald-600" />
+          <div className="pt-4 border-t border-emerald-400/15 flex items-center justify-between gap-4">
+            <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
               <span>30 {lang === 'hi' ? 'जानवर · 2 खिलाड़ी' : 'Animals · 2 Players'}</span>
             </span>
             <button
               type="button"
               onClick={onSelectGuessAnimal}
-              className="min-h-[48px] px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-all active:scale-[0.98]"
+              className="min-h-[48px] px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-all active:scale-[0.98]"
             >
               <span>{t(lang, 'playNow')}</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />
@@ -361,6 +320,47 @@ export const GameHubScreen: React.FC<GameHubScreenProps> = ({
               type="button"
               onClick={onSelectPlayingCards}
               className="min-h-[48px] px-6 rounded-2xl bg-[#FAF7F0] hover:bg-[#EFE8DA] text-[#173326] font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-all active:scale-[0.98]"
+            >
+              <span>{t(lang, 'playNow')}</span>
+              <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+          </div>
+        </article>
+
+        {/* Card 5: Draw & Guess */}
+        <article className="group relative overflow-hidden bg-gradient-to-br from-[#191B34] via-[#13192D] to-[#101A28] border border-indigo-400/35 hover:border-indigo-300/60 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-6 shadow-xl transition-all duration-300 hover:-translate-y-1">
+          <div className="relative z-10 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 flex items-center justify-center shadow-md">
+                <Palette className="w-7 h-7" />
+              </div>
+              <span className="text-xs font-semibold text-indigo-300">
+                {t(lang, 'dgBadge')}
+              </span>
+            </div>
+
+            <div>
+              <h2 className="font-display text-2xl font-extrabold text-white tracking-tight">
+                {t(lang, 'dgTitle')}
+              </h2>
+              <p className="text-sm text-indigo-100/80 mt-2 leading-relaxed">
+                {t(lang, 'dgSubtitle')}
+              </p>
+              <p className="text-xs text-indigo-300/90 mt-2 font-medium">
+                Desi &amp; India · Animals · Food · Objects · Adventure
+              </p>
+            </div>
+          </div>
+
+          <div className="relative z-10 pt-4 border-t border-white/10 flex items-center justify-between gap-4">
+            <span className="text-xs font-semibold text-indigo-200/85 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-indigo-400" />
+              <span>2–10 {t(lang, 'playersCount')}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onSelectDrawGuess}
+              className="min-h-[48px] px-6 rounded-2xl bg-indigo-500 hover:bg-indigo-400 text-white font-display font-bold text-sm flex items-center gap-2 whitespace-nowrap shrink-0 shadow-md shadow-indigo-500/20 transition-all active:scale-[0.98]"
             >
               <span>{t(lang, 'playNow')}</span>
               <ArrowRight className="w-4 h-4 stroke-[2.5]" />

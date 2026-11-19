@@ -40,9 +40,28 @@
   animation: speaking-ring 1.1s ease-in-out infinite;
 }
 
+@keyframes voice-wave {
+  0%, 100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.voice-wave-bar {
+  animation: voice-wave 0.7s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .speaking-glow {
     animation: none;
     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.9);
+  }
+
+  .voice-wave-bar {
+    animation: none;
+    transform: scaleY(0.8);
   }
 }

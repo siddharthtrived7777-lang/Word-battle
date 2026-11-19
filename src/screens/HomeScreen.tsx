@@ -3,7 +3,7 @@ import { Plus, ArrowRight, Database, Users, Mic, Eye, LogIn, LogOut } from 'luci
 import { User } from 'firebase/auth';
 import { Language, PlayerAvatar } from '../types/game';
 import { t } from '../data/i18n';
-import { AVATAR_COLORS, AVATAR_EMOJIS, Avatar } from '../components/Avatar';
+import { AVATAR_COLORS, Avatar } from '../components/Avatar';
 import { isFirestoreConfigured } from '../firebase';
 
 interface HomeScreenProps {
@@ -106,71 +106,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               />
             </div>
 
-            {/* Avatar Mode Switch + Selector */}
+            {/* Initials Badge Color Selector */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2.5">
                 <span className="text-xs font-semibold text-slate-300">
                   {t(lang, 'chooseAvatar')}
                 </span>
-                <div className="inline-flex items-center p-1 rounded-xl bg-[#0B0F17] border border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setAvatar({ ...avatar, type: 'emoji' })}
-                    className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors ${
-                      avatar.type === 'emoji'
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {t(lang, 'emojiMode')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAvatar({ ...avatar, type: 'initials' })}
-                    className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors ${
-                      avatar.type === 'initials'
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {t(lang, 'initialsMode')}
-                  </button>
-                </div>
               </div>
 
-              {avatar.type === 'emoji' ? (
-                <div className="grid grid-cols-8 gap-2">
-                  {AVATAR_EMOJIS.map((em) => (
-                    <button
-                      key={em}
-                      type="button"
-                      onClick={() => setAvatar({ ...avatar, emoji: em })}
-                      className={`min-h-[44px] rounded-xl text-xl flex items-center justify-center transition-all active:scale-95 ${
-                        avatar.emoji === em
-                          ? 'bg-amber-500/20 ring-2 ring-amber-400'
-                          : 'bg-[#0B0F17] hover:bg-slate-800'
-                      }`}
-                    >
-                      {em}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid grid-cols-8 gap-2">
-                  {AVATAR_COLORS.map((col) => (
-                    <button
-                      key={col}
-                      type="button"
-                      onClick={() => setAvatar({ ...avatar, color: col })}
-                      className={`min-h-[44px] rounded-xl flex items-center justify-center transition-all active:scale-95 ${
-                        avatar.color === col ? 'ring-2 ring-white scale-105' : 'opacity-80 hover:opacity-100'
-                      }`}
-                      style={{ backgroundColor: col }}
-                      aria-label={`Color ${col}`}
-                    />
-                  ))}
-                </div>
-              )}
+              <div className="grid grid-cols-8 gap-2">
+                {AVATAR_COLORS.map((col) => (
+                  <button
+                    key={col}
+                    type="button"
+                    onClick={() => setAvatar({ type: 'initials', color: col })}
+                    className={`min-h-[44px] rounded-xl flex items-center justify-center transition-all active:scale-95 ${
+                      avatar.color === col ? 'ring-2 ring-white scale-105' : 'opacity-80 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: col }}
+                    aria-label={`Color ${col}`}
+                  />
+                ))}
+              </div>
             </div>
 
             {errorMsg && (

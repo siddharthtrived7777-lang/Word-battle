@@ -108,6 +108,17 @@ class SoundEffects {
     this.playTone(783.99, 0.13, 'triangle', 0.07, 0.16);
     this.playTone(1046.5, 0.26, 'triangle', 0.07, 0.24);
   }
+
+  correctGuess() {
+    this.playTone(587.33, 0.09, 'triangle', 0.07, 0);
+    this.playTone(783.99, 0.11, 'triangle', 0.07, 0.07);
+    this.playTone(1046.5, 0.18, 'triangle', 0.07, 0.14);
+  }
+
+  countdownTick() {
+    this.playTone(660, 0.04, 'sine', 0.03, 0);
+  }
 }
 
 export const soundFx = new SoundEffects();
+

@@ -16,7 +16,6 @@ import {
 } from './firebase';
 import { FIREBASE_CONFIG } from './firebaseConfig';
 import {
-  ClueEntry,
   GameSettings,
   Language,
   Player,
@@ -33,6 +32,8 @@ import {
   CharadesDifficulty,
   CharadesPlayer,
   CharadesPrivateMovie,
+  CharadesReactionEvent,
+  CharadesReactionType,
   CharadesRoomState,
   CharadesTeamId,
 } from './types/charades';
@@ -62,10 +63,11 @@ import {
 } from './services/cardRoomService';
 import { useVoiceChat, VoiceTransportAdapter } from './hooks/useVoiceChat';
 import { useCharadesMedia } from './hooks/useCharadesMedia';
+import { useCharadesGestureDetector } from './hooks/useCharadesGestureDetector';
 import { soundFx } from './utils/soundFx';
-import { AVATAR_COLORS, AVATAR_EMOJIS } from './components/Avatar';
+import { AVATAR_COLORS } from './components/Avatar';
 import { TopBar } from './components/TopBar';
-import { VoiceBar } from './components/VoiceBar';
+import { WordRoomShell } from './components/WordRoomShell';
 import { FirebaseGuideModal } from './components/FirebaseGuideModal';
 import { GameHubScreen } from './screens/GameHubScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -83,10 +85,30 @@ import { CharadesGameScreen } from './screens/CharadesGameScreen';
 import { PlayingCardsMenuScreen } from './screens/PlayingCardsMenuScreen';
 import { PlayingCardsLobbyScreen } from './screens/PlayingCardsLobbyScreen';
 import { PlayingCardsTableScreen } from './screens/PlayingCardsTableScreen';
+import { DrawMenuScreen } from './screens/DrawMenuScreen';
+import { DrawLobbyScreen } from './screens/DrawLobbyScreen';
+import { DrawGameScreen } from './screens/DrawGameScreen';
+import type {
+  DrawMessageDoc,
+  DrawRoomState,
+  DrawSecretDoc,
+  DrawStrokeDoc,
+} from './types/drawGuess';
+import {
+  drawRoomService,
+  saveActiveDrawRoomCode,
+} from './services/drawRoomService';
+import { buildHintMask } from './data/drawWords';
 
 void FIREBASE_CONFIG;
 
-type ActiveHubSection = 'hub' | 'word_battle' | 'guess_animal' | 'charades' | 'playing_cards';
+type ActiveHubSection =
+  | 'hub'
+  | 'word_battle'
+  | 'guess_animal'
+  | 'charades'
+  | 'playing_cards'
+  | 'draw_guess';
 
 function loadStoredProfile() {
   try {
@@ -95,20 +117,21 @@ function loadStoredProfile() {
     const name = localStorage.getItem('iw_player_name') || '';
     const lang = (localStorage.getItem('iw_lang') as Language) || 'en';
     const rawAvatar = localStorage.getItem('iw_avatar');
-    const avatar: PlayerAvatar = rawAvatar
-      ? JSON.parse(rawAvatar)
-      : {
-          type: 'emoji',
-          emoji: AVATAR_EMOJIS[Math.floor(Math.random() * AVATAR_EMOJIS.length)],
-          color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-        };
+    const parsedAvatar: Partial<PlayerAvatar> | null = rawAvatar ? JSON.parse(rawAvatar) : null;
+    const avatar: PlayerAvatar = {
+      type: 'initials',
+      color:
+        parsedAvatar?.color && AVATAR_COLORS.includes(parsedAvatar.color)
+          ? parsedAvatar.color
+          : AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+    };
     return { id, name, lang, avatar };
   } catch {
     return {
       id: generatePlayerId(),
       name: '',
       lang: 'en' as Language,
-      avatar: { type: 'emoji' as const, emoji: '🦊', color: AVATAR_COLORS[0] },
+      avatar: { type: 'initials' as const, color: AVATAR_COLORS[0] },
     };
   }
 }
@@ -153,14 +176,25 @@ export default function App() {
     }
   }, []);
 
+  const initialDrawCode = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get('draw') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    } catch {
+      return '';
+    }
+  }, []);
+
   const [activeGame, setActiveGame] = useState<ActiveHubSection>(() =>
-    initialCardsCode
-      ? 'playing_cards'
-      : initialCharadesCode
-        ? 'charades'
-        : initialJoinCode
-          ? 'word_battle'
-          : 'hub'
+    initialDrawCode
+      ? 'draw_guess'
+      : initialCardsCode
+        ? 'playing_cards'
+        : initialCharadesCode
+          ? 'charades'
+          : initialJoinCode
+            ? 'word_battle'
+            : 'hub'
   );
 
   // Word Battle State (preserved identically)
@@ -184,6 +218,7 @@ export default function App() {
   const [charadesRoom, setCharadesRoom] = useState<CharadesRoomState | null>(null);
   const [myPrivateMovie, setMyPrivateMovie] = useState<CharadesPrivateMovie | null>(null);
   const [rejoinCharadesRoom, setRejoinCharadesRoom] = useState<CharadesRoomState | null>(null);
+  const [charadesReactions, setCharadesReactions] = useState<CharadesReactionEvent[]>([]);
   const [charadesErrorMsg, setCharadesErrorMsg] = useState<string | null>(null);
   const [charadesLoadingAction, setCharadesLoadingAction] = useState<
     'create' | 'join' | 'rejoin' | null
@@ -196,6 +231,18 @@ export default function App() {
   const [cardLoadingAction, setCardLoadingAction] = useState<
     'create' | 'join' | 'rejoin' | null
   >(null);
+
+  // Draw & Guess State
+  const [drawRoom, setDrawRoom] = useState<DrawRoomState | null>(null);
+  const [drawStrokes, setDrawStrokes] = useState<DrawStrokeDoc[]>([]);
+  const [drawMessages, setDrawMessages] = useState<DrawMessageDoc[]>([]);
+  const [myDrawSecret, setMyDrawSecret] = useState<DrawSecretDoc | null>(null);
+  const [rejoinDrawRoom, setRejoinDrawRoom] = useState<DrawRoomState | null>(null);
+  const [drawErrorMsg, setDrawErrorMsg] = useState<string | null>(null);
+  const [drawLoadingAction, setDrawLoadingAction] = useState<
+    'create' | 'join' | 'rejoin' | null
+  >(null);
+  const [drawVoiceEnabled, setDrawVoiceEnabled] = useState(false);
 
   const myId = firestoreEnabled && authUser ? authUser.uid : initial.id;
 
@@ -212,6 +259,15 @@ export default function App() {
   const revealingCardsFinishRef = useRef<string>('');
   const cardTimeoutKeyRef = useRef<string>('');
   const cardEntryLockRef = useRef<boolean>(false);
+  const drawEntryLockRef = useRef<boolean>(false);
+  const drawChoicesKeyRef = useRef<string>('');
+  const drawHintStageRef = useRef<{ turnKey: string; stage: number; indices: number[] }>({
+    turnKey: '',
+    stage: 0,
+    indices: [],
+  });
+  const drawRevealLockRef = useRef<string>('');
+  const drawAdvanceLockRef = useRef<string>('');
 
   useEffect(() => {
     if (!firestoreEnabled) return;
@@ -226,6 +282,7 @@ export default function App() {
         animalRoomService.cleanup();
         charadesRoomService.cleanup();
         cardRoomService.cleanup();
+        drawRoomService.cleanup();
         setRoom(null);
         setAnimalRoom(null);
         setMyAnimalSecretId(null);
@@ -233,8 +290,14 @@ export default function App() {
         setCharadesRoom(null);
         setMyPrivateMovie(null);
         setRejoinCharadesRoom(null);
+        setCharadesReactions([]);
         setCardRoom(null);
         setRejoinCardRoom(null);
+        setDrawRoom(null);
+        setDrawStrokes([]);
+        setDrawMessages([]);
+        setMyDrawSecret(null);
+        setRejoinDrawRoom(null);
       }
     });
     return () => unsub();
@@ -303,6 +366,47 @@ export default function App() {
     charadesRoom?.players
   );
 
+  const pushCharadesReaction = useCallback((reaction: CharadesReactionEvent) => {
+    setCharadesReactions((prev) => {
+      if (prev.some((item) => item.id === reaction.id)) return prev;
+      return [...prev.slice(-11), reaction];
+    });
+    window.setTimeout(() => {
+      setCharadesReactions((prev) => prev.filter((item) => item.id !== reaction.id));
+    }, 2600);
+  }, []);
+
+  const handleLocalGestureTriggered = useCallback(
+    async (gesture: CharadesReactionType) => {
+      if (!charadesRoom) return;
+      const myName =
+        charadesRoom.players[myId]?.name ||
+        playerName.trim() ||
+        authUser?.displayName ||
+        'Player';
+      try {
+        const sent = await charadesRoomService.sendReaction(
+          charadesRoom.code,
+          myName,
+          gesture,
+          charadesRoom.playerIds
+        );
+        if (sent) {
+          pushCharadesReaction(sent);
+        }
+      } catch {
+        // Ignore transient reaction broadcast failure without disrupting gameplay
+      }
+    },
+    [authUser?.displayName, charadesRoom, myId, playerName, pushCharadesReaction]
+  );
+
+  useCharadesGestureDetector({
+    enabled: activeGame === 'charades' && Boolean(charadesRoom) && charadesMedia.cameraOn,
+    localStream: charadesMedia.localStream,
+    onGestureTriggered: handleLocalGestureTriggered,
+  });
+
   // Live voice chat WebRTC mesh for Playing Cards
   const cardsVoiceAdapter = useMemo<VoiceTransportAdapter>(
     () => ({
@@ -321,6 +425,163 @@ export default function App() {
 
   const cardsVoiceSignalRef = useRef(cardsVoice.handleSignal);
   cardsVoiceSignalRef.current = cardsVoice.handleSignal;
+
+  // Optional live voice chat WebRTC mesh for Draw & Guess
+  const drawRoomCodeRef = useRef<string | null>(null);
+  drawRoomCodeRef.current = drawRoom?.code ?? null;
+
+  const drawVoiceAdapter = useMemo<VoiceTransportAdapter>(
+    () => ({
+      sendSignal: async (signal) => {
+        const code = drawRoomCodeRef.current;
+        if (!code) return;
+        await drawRoomService.sendSignal(code, {
+          ...signal,
+          id: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          timestamp: Date.now(),
+        });
+      },
+      updateMuteState: async (playerId, muted) => {
+        const code = drawRoomCodeRef.current;
+        if (!code) return;
+        await drawRoomService.setMute(code, playerId, muted);
+      },
+    }),
+    []
+  );
+
+  const drawVoice = useVoiceChat(
+    myId,
+    Boolean(drawRoom) && drawVoiceEnabled,
+    drawRoom?.players,
+    drawVoiceAdapter
+  );
+
+  const drawVoiceSignalRef = useRef(drawVoice.handleSignal);
+  drawVoiceSignalRef.current = drawVoice.handleSignal;
+
+  // Discover active Draw & Guess room to offer rejoin
+  useEffect(() => {
+    if (!firestoreEnabled || !authUser || drawRoom) return;
+    if (activeGame !== 'draw_guess') return;
+
+    let cancelled = false;
+    drawRoomService
+      .findRejoinableRoom(authUser.uid)
+      .then((found) => {
+        if (!cancelled) setRejoinDrawRoom(found);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeGame, authUser, drawRoom, firestoreEnabled]);
+
+  // Draw & Guess: Ensure drawer gets 3 word choices on choosing_word phase
+  useEffect(() => {
+    if (!drawRoom || drawRoom.phase !== 'choosing_word' || !drawRoom.turn) return;
+    if (drawRoom.turn.drawerUid !== myId) return;
+    const key = drawRoom.turn.turnKey;
+    if (drawChoicesKeyRef.current === key) return;
+    drawChoicesKeyRef.current = key;
+    void drawRoomService.ensureDrawerChoices(drawRoom.code, drawRoom, myId).catch(() => {
+      drawChoicesKeyRef.current = '';
+    });
+  }, [drawRoom, myId]);
+
+  // Draw & Guess: Auto-pick, auto-hints, all-solved reveal, and turn-reveal auto-advance
+  useEffect(() => {
+    if (!drawRoom || !drawRoom.turn) return;
+    const turn = drawRoom.turn;
+    const isDrawer = turn.drawerUid === myId;
+    const isHost = drawRoom.hostId === myId;
+
+    const tick = () => {
+      const now = Date.now();
+
+      // 1. Choosing word timeout -> drawer auto-picks first option
+      if (drawRoom.phase === 'choosing_word') {
+        if (isDrawer && now >= turn.deadlineAt && myDrawSecret?.turnKey === turn.turnKey && myDrawSecret.choices[0]) {
+          const lock = `autopick_${turn.turnKey}`;
+          if (drawRevealLockRef.current !== lock) {
+            drawRevealLockRef.current = lock;
+            void drawRoomService.selectWord(drawRoom.code, drawRoom, myId, myDrawSecret.choices[0]);
+          }
+        }
+        return;
+      }
+
+      // 2. Drawing phase: progressive hints + all-guessed / timeout reveal
+      if (drawRoom.phase === 'drawing') {
+        const totalMs = Math.max(1000, drawRoom.settings.drawTimeSec * 1000);
+        const remainingMs = turn.deadlineAt - now;
+
+        // Progressive letter hints published by drawer
+        if (
+          isDrawer &&
+          drawRoom.settings.hintsEnabled &&
+          myDrawSecret?.turnKey === turn.turnKey &&
+          myDrawSecret.word
+        ) {
+          const letters = myDrawSecret.word.replace(/[^a-zA-Z0-9]/g, '');
+          if (drawHintStageRef.current.turnKey !== turn.turnKey) {
+            const idxPool = Array.from({ length: letters.length }, (_, i) => i);
+            for (let i = idxPool.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [idxPool[i], idxPool[j]] = [idxPool[j], idxPool[i]];
+            }
+            drawHintStageRef.current = { turnKey: turn.turnKey, stage: 0, indices: idxPool };
+          }
+
+          if (letters.length >= 4 && remainingMs <= totalMs * 0.5 && drawHintStageRef.current.stage < 1) {
+            drawHintStageRef.current.stage = 1;
+            const reveal = drawHintStageRef.current.indices.slice(0, 1);
+            void drawRoomService.publishHintMask(drawRoom.code, turn, buildHintMask(myDrawSecret.word, reveal));
+          } else if (letters.length >= 6 && remainingMs <= totalMs * 0.25 && drawHintStageRef.current.stage < 2) {
+            drawHintStageRef.current.stage = 2;
+            const reveal = drawHintStageRef.current.indices.slice(0, 2);
+            void drawRoomService.publishHintMask(drawRoom.code, turn, buildHintMask(myDrawSecret.word, reveal));
+          }
+        }
+
+        const otherPlayerIds = drawRoom.playerIds.filter((id) => id !== turn.drawerUid);
+        const allSolved =
+          otherPlayerIds.length > 0 &&
+          otherPlayerIds.every((uid) => Boolean(turn.guessedBy[uid]));
+        const timedOut = remainingMs <= 0;
+
+        if (allSolved || timedOut) {
+          const revealKey = `reveal_${turn.turnKey}`;
+          if (drawRevealLockRef.current === revealKey) return;
+
+          if (isDrawer && myDrawSecret?.turnKey === turn.turnKey && myDrawSecret.word) {
+            drawRevealLockRef.current = revealKey;
+            void drawRoomService.revealTurn(drawRoom.code, drawRoom, myDrawSecret.word);
+          } else if (isHost && (!drawRoom.players[turn.drawerUid] || remainingMs <= -3500)) {
+            drawRevealLockRef.current = revealKey;
+            void drawRoomService.revealTurn(drawRoom.code, drawRoom, 'Time Up');
+          }
+        }
+        return;
+      }
+
+      // 3. Turn reveal timeout -> advance to next drawer or finished podium
+      if (drawRoom.phase === 'turn_reveal') {
+        if (now >= turn.deadlineAt && (isHost || (isDrawer && !drawRoom.players[drawRoom.hostId]))) {
+          const advKey = `adv_${turn.turnKey}`;
+          if (drawAdvanceLockRef.current !== advKey) {
+            drawAdvanceLockRef.current = advKey;
+            void drawRoomService.advanceNextTurn(drawRoom.code, drawRoom);
+          }
+        }
+      }
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 500);
+    return () => window.clearInterval(intervalId);
+  }, [drawRoom, myDrawSecret, myId]);
 
   // Discover active Guess the Animal room to offer rejoin after disconnect
   useEffect(() => {
@@ -907,21 +1168,6 @@ export default function App() {
     });
   };
 
-  const handleSendClue = (text: string) => {
-    if (!room || !room.roundConfig) return;
-    const me = room.players[myId];
-    if (!me) return;
-    const clue: ClueEntry = {
-      id: `${Date.now()}_${myId}`,
-      playerId: myId,
-      playerName: me.name,
-      round: room.roundConfig.currentRound,
-      text,
-      createdAt: Date.now(),
-    };
-    roomTransport.addClue(clue);
-  };
-
   const handleCastVote = (targetId: string) => {
     if (!room || room.phase !== 'voting') return;
     roomTransport.castVote(targetId);
@@ -1132,6 +1378,7 @@ export default function App() {
             onRoomUpdate: setCharadesRoom,
             onPrivateMovieUpdate: setMyPrivateMovie,
             onSignal: charadesMedia.handleSignal,
+            onReaction: pushCharadesReaction,
           });
           setRejoinCharadesRoom(null);
           lastErr = null;
@@ -1176,6 +1423,7 @@ export default function App() {
         onRoomUpdate: setCharadesRoom,
         onPrivateMovieUpdate: setMyPrivateMovie,
         onSignal: charadesMedia.handleSignal,
+        onReaction: pushCharadesReaction,
       });
       setRejoinCharadesRoom(null);
       await charadesMedia.startMedia({ wantVideo: true, wantAudio: true });
@@ -1195,6 +1443,7 @@ export default function App() {
     setCharadesRoom(null);
     setMyPrivateMovie(null);
     setRejoinCharadesRoom(null);
+    setCharadesReactions([]);
     setCharadesErrorMsg(null);
   };
 
@@ -1311,10 +1560,121 @@ export default function App() {
     cardTimeoutKeyRef.current = '';
   };
 
-  const playersList = room ? getSortedPlayers(room.players) : [];
-  const speakingNames = playersList
-    .filter((p) => speakingIds[p.id])
-    .map((p) => p.name);
+  // ---------------- Draw & Guess Handlers ----------------
+  const attachDrawListeners = (code: string) => {
+    drawRoomService.subscribe(code, myId, {
+      onRoom: (next) => {
+        if (!next) {
+          drawRoomService.cleanup();
+          saveActiveDrawRoomCode(myId, null);
+          setDrawRoom(null);
+          setDrawStrokes([]);
+          setDrawMessages([]);
+          setMyDrawSecret(null);
+          return;
+        }
+        setDrawRoom(next);
+      },
+      onStrokes: (items) => setDrawStrokes(items),
+      onMessages: (items) => setDrawMessages(items),
+      onSecret: (secret) => setMyDrawSecret(secret),
+      onSignal: (sig) => drawVoiceSignalRef.current(sig),
+      onError: (msg) => setDrawErrorMsg(msg),
+    });
+  };
+
+  const handleCreateDrawRoom = async () => {
+    if (drawEntryLockRef.current) return;
+    if (firestoreEnabled && !authUser) {
+      setDrawErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    if (firestoreEnabled && authUser && !authUser.emailVerified) {
+      setDrawErrorMsg(mapTransportError('AUTH_UNVERIFIED'));
+      return;
+    }
+    drawEntryLockRef.current = true;
+    setDrawErrorMsg(null);
+    setDrawLoadingAction('create');
+    try {
+      const displayName = playerName.trim() || authUser?.displayName || 'Player';
+      const created = await drawRoomService.createRoom(myId, displayName, avatar);
+      setDrawRoom(created);
+      setRejoinDrawRoom(null);
+      attachDrawListeners(created.code);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setDrawErrorMsg(mapTransportError(msg));
+    } finally {
+      drawEntryLockRef.current = false;
+      setDrawLoadingAction(null);
+    }
+  };
+
+  const handleJoinDrawRoom = async (
+    rawCode: string,
+    actionType: 'join' | 'rejoin' = 'join'
+  ) => {
+    if (drawEntryLockRef.current) return;
+    if (firestoreEnabled && !authUser) {
+      setDrawErrorMsg(t(lang, 'signInRequired'));
+      return;
+    }
+    if (firestoreEnabled && authUser && !authUser.emailVerified) {
+      setDrawErrorMsg(mapTransportError('AUTH_UNVERIFIED'));
+      return;
+    }
+    const cleanCode = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    if (cleanCode.length !== 5) {
+      setDrawErrorMsg(t(lang, 'errInvalidCode'));
+      return;
+    }
+    drawEntryLockRef.current = true;
+    setDrawErrorMsg(null);
+    setDrawLoadingAction(actionType);
+    try {
+      const displayName = playerName.trim() || authUser?.displayName || 'Player';
+      const joined = await drawRoomService.joinRoom(cleanCode, myId, displayName, avatar);
+      setDrawRoom(joined);
+      setRejoinDrawRoom(null);
+      attachDrawListeners(joined.code);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'CONNECTION_FAILED';
+      setDrawErrorMsg(mapTransportError(msg));
+    } finally {
+      drawEntryLockRef.current = false;
+      setDrawLoadingAction(null);
+    }
+  };
+
+  const handleToggleDrawVoice = async () => {
+    if (drawVoiceEnabled) {
+      drawVoice.stopMicrophone();
+      setDrawVoiceEnabled(false);
+    } else {
+      setDrawVoiceEnabled(true);
+      await drawVoice.requestMicrophone().catch(() => {});
+    }
+  };
+
+  const handleLeaveDrawRoom = async () => {
+    if (drawRoom) {
+      await drawRoomService.leaveRoom(drawRoom.code, myId);
+    }
+    drawVoice.stopMicrophone();
+    setDrawVoiceEnabled(false);
+    setDrawRoom(null);
+    setDrawStrokes([]);
+    setDrawMessages([]);
+    setMyDrawSecret(null);
+    setRejoinDrawRoom(null);
+    setDrawErrorMsg(null);
+    drawChoicesKeyRef.current = '';
+    drawRevealLockRef.current = '';
+    drawAdvanceLockRef.current = '';
+  };
+
+  const inWordBattleRoom = activeGame === 'word_battle' && Boolean(room);
 
   const screenKey =
     activeGame === 'hub'
@@ -1331,9 +1691,13 @@ export default function App() {
             ? cardRoom
               ? `pc_${cardRoom.phase}_${cardRoom.selectedGame}`
               : 'pc_menu'
-            : charadesRoom
-              ? `dc_${charadesRoom.phase}`
-              : 'dc_menu';
+            : activeGame === 'draw_guess'
+              ? drawRoom
+                ? `dg_${drawRoom.phase}`
+                : 'dg_menu'
+              : charadesRoom
+                ? `dc_${charadesRoom.phase}`
+                : 'dc_menu';
 
   const topBarTitle =
     activeGame === 'hub'
@@ -1344,7 +1708,9 @@ export default function App() {
           ? t(lang, 'dcTitle')
           : activeGame === 'playing_cards'
             ? t(lang, 'pcMenuTitle')
-            : t(lang, 'appTitle');
+            : activeGame === 'draw_guess'
+              ? t(lang, 'dgTitle')
+              : t(lang, 'appTitle');
 
   const topBarSubtitle =
     activeGame === 'hub'
@@ -1355,7 +1721,9 @@ export default function App() {
           ? t(lang, 'dcBadge')
           : activeGame === 'playing_cards'
             ? t(lang, 'pcBadge')
-            : t(lang, 'tagline');
+            : activeGame === 'draw_guess'
+              ? t(lang, 'dgBadge')
+              : t(lang, 'tagline');
 
   const activeRoomCode =
     activeGame === 'word_battle'
@@ -1366,7 +1734,89 @@ export default function App() {
           ? charadesRoom?.code
           : activeGame === 'playing_cards'
             ? cardRoom?.code
-            : undefined;
+            : activeGame === 'draw_guess'
+              ? drawRoom?.code
+              : undefined;
+
+  if (inWordBattleRoom && room) {
+    return (
+      <>
+        <WordRoomShell
+          lang={lang}
+          room={room}
+          myId={myId}
+          speakingIds={speakingIds}
+          micStatus={micStatus}
+          isMuted={isMuted}
+          onToggleMute={toggleMute}
+          onRetryMic={requestMicrophone}
+          onLeaveRoom={handleLeaveRoom}
+          onToggleLang={handleToggleLang}
+          sfxEnabled={sfxEnabled}
+          onToggleSfx={handleToggleSfx}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={screenKey}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {room.phase === 'lobby' ? (
+                <LobbyScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  onUpdateSettings={handleUpdateSettings}
+                  onStartGame={handleStartGame}
+                />
+              ) : room.phase === 'reveal' ? (
+                <RoleRevealScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  onMarkReady={handleMarkReady}
+                  onForceStartDiscussion={handleStartDiscussion}
+                />
+              ) : room.phase === 'discussion' ? (
+                <DiscussionScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onAdvanceTurn={handleAdvanceTurn}
+                  onForceVoting={handleForceVoting}
+                />
+              ) : room.phase === 'voting' ? (
+                <VotingScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onCastVote={handleCastVote}
+                  onForceRevealResults={finalizeVoting}
+                />
+              ) : (
+                <ResultScreen
+                  lang={lang}
+                  room={room}
+                  myId={myId}
+                  speakingIds={speakingIds}
+                  onPlayAgain={handlePlayAgain}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </WordRoomShell>
+
+        <FirebaseGuideModal
+          open={showFirebaseGuide}
+          onClose={() => setShowFirebaseGuide(false)}
+        />
+      </>
+    );
+  }
 
   return (
     <div
@@ -1386,14 +1836,15 @@ export default function App() {
         title={topBarTitle}
         subtitle={topBarSubtitle}
         roomCode={activeRoomCode}
-        onLeaveRoom={activeGame === 'word_battle' && room ? handleLeaveRoom : undefined}
+        onLeaveRoom={undefined}
         onBackToHub={
-          activeGame !== 'hub' && !room && !animalRoom && !charadesRoom && !cardRoom
+          activeGame !== 'hub' && !room && !animalRoom && !charadesRoom && !cardRoom && !drawRoom
             ? () => {
                 setErrorMsg(null);
                 setAnimalErrorMsg(null);
                 setCharadesErrorMsg(null);
                 setCardErrorMsg(null);
+                setDrawErrorMsg(null);
                 setActiveGame('hub');
               }
             : undefined
@@ -1428,73 +1879,27 @@ export default function App() {
                 onSelectGuessAnimal={() => setActiveGame('guess_animal')}
                 onSelectDumbCharades={() => setActiveGame('charades')}
                 onSelectPlayingCards={() => setActiveGame('playing_cards')}
+                onSelectDrawGuess={() => setActiveGame('draw_guess')}
               />
             ) : activeGame === 'word_battle' ? (
-              !room ? (
-                <HomeScreen
-                  lang={lang}
-                  playerName={playerName}
-                  setPlayerName={setPlayerName}
-                  avatar={avatar}
-                  setAvatar={setAvatar}
-                  initialJoinCode={initialJoinCode}
-                  onCreateRoom={handleCreateRoom}
-                  onJoinRoom={handleJoinRoom}
-                  onOpenFirebaseGuide={() => setShowFirebaseGuide(true)}
-                  errorMsg={errorMsg}
-                  loadingAction={loadingAction}
-                  authReady={authReady}
-                  authUser={authUser}
-                  onSignIn={handleSignIn}
-                  onSignOut={handleSignOut}
-                  signingIn={signingIn}
-                />
-              ) : room.phase === 'lobby' ? (
-                <LobbyScreen
-                  lang={lang}
-                  room={room}
-                  myId={myId}
-                  speakingIds={speakingIds}
-                  onUpdateSettings={handleUpdateSettings}
-                  onStartGame={handleStartGame}
-                />
-              ) : room.phase === 'reveal' ? (
-                <RoleRevealScreen
-                  lang={lang}
-                  room={room}
-                  myId={myId}
-                  speakingIds={speakingIds}
-                  onMarkReady={handleMarkReady}
-                  onForceStartDiscussion={handleStartDiscussion}
-                />
-              ) : room.phase === 'discussion' ? (
-                <DiscussionScreen
-                  lang={lang}
-                  room={room}
-                  myId={myId}
-                  speakingIds={speakingIds}
-                  onAdvanceTurn={handleAdvanceTurn}
-                  onSendClue={handleSendClue}
-                  onForceVoting={handleForceVoting}
-                />
-              ) : room.phase === 'voting' ? (
-                <VotingScreen
-                  lang={lang}
-                  room={room}
-                  myId={myId}
-                  speakingIds={speakingIds}
-                  onCastVote={handleCastVote}
-                  onForceRevealResults={finalizeVoting}
-                />
-              ) : (
-                <ResultScreen
-                  lang={lang}
-                  room={room}
-                  myId={myId}
-                  speakingIds={speakingIds}
-                  onPlayAgain={handlePlayAgain}
-                />
-              )
+              <HomeScreen
+                lang={lang}
+                playerName={playerName}
+                setPlayerName={setPlayerName}
+                avatar={avatar}
+                setAvatar={setAvatar}
+                initialJoinCode={initialJoinCode}
+                onCreateRoom={handleCreateRoom}
+                onJoinRoom={handleJoinRoom}
+                onOpenFirebaseGuide={() => setShowFirebaseGuide(true)}
+                errorMsg={errorMsg}
+                loadingAction={loadingAction}
+                authReady={authReady}
+                authUser={authUser}
+                onSignIn={handleSignIn}
+                onSignOut={handleSignOut}
+                signingIn={signingIn}
+              />
             ) : activeGame === 'guess_animal' ? (
               !animalRoom ? (
                 <GuessAnimalMenuScreen
@@ -1674,6 +2079,111 @@ export default function App() {
                   onLeaveRoom={handleLeaveCardRoom}
                 />
               )
+            ) : activeGame === 'draw_guess' ? (
+              !drawRoom ? (
+                <DrawMenuScreen
+                  lang={lang}
+                  playerName={playerName}
+                  initialJoinCode={initialDrawCode}
+                  authReady={authReady}
+                  authUser={authUser}
+                  signingIn={signingIn}
+                  onSignIn={handleSignIn}
+                  onCreateRoom={handleCreateDrawRoom}
+                  onJoinRoom={(code) => handleJoinDrawRoom(code, 'join')}
+                  onBack={() => {
+                    setDrawErrorMsg(null);
+                    setActiveGame('hub');
+                  }}
+                  rejoinRoom={rejoinDrawRoom}
+                  onRejoin={(code) => handleJoinDrawRoom(code, 'rejoin')}
+                  onDismissRejoin={() => {
+                    saveActiveDrawRoomCode(myId, null);
+                    setRejoinDrawRoom(null);
+                  }}
+                  errorMsg={drawErrorMsg}
+                  loadingAction={drawLoadingAction}
+                />
+              ) : drawRoom.phase === 'lobby' ? (
+                <DrawLobbyScreen
+                  lang={lang}
+                  room={drawRoom}
+                  myId={myId}
+                  speakingIds={drawVoice.speakingIds}
+                  voiceEnabled={drawVoiceEnabled}
+                  micStatus={drawVoice.micStatus}
+                  isMuted={drawVoice.isMuted}
+                  onToggleVoice={handleToggleDrawVoice}
+                  onToggleMute={drawVoice.toggleMute}
+                  onUpdateSettings={async (settings) => {
+                    try {
+                      setDrawErrorMsg(null);
+                      await drawRoomService.updateSettings(drawRoom.code, settings);
+                    } catch (err) {
+                      setDrawErrorMsg(err instanceof Error ? err.message : 'Failed');
+                    }
+                  }}
+                  onStartGame={async () => {
+                    try {
+                      setDrawErrorMsg(null);
+                      drawChoicesKeyRef.current = '';
+                      drawRevealLockRef.current = '';
+                      drawAdvanceLockRef.current = '';
+                      await drawRoomService.startGame(drawRoom.code, drawRoom);
+                    } catch (err) {
+                      setDrawErrorMsg(
+                        err instanceof Error ? err.message.replace(/_/g, ' ') : 'Could not start'
+                      );
+                    }
+                  }}
+                  onLeaveRoom={handleLeaveDrawRoom}
+                  errorMsg={drawErrorMsg}
+                />
+              ) : (
+                <DrawGameScreen
+                  lang={lang}
+                  room={drawRoom}
+                  myId={myId}
+                  mySecret={myDrawSecret}
+                  strokes={drawStrokes}
+                  messages={drawMessages}
+                  speakingIds={drawVoice.speakingIds}
+                  voiceEnabled={drawVoiceEnabled}
+                  isMuted={drawVoice.isMuted}
+                  onToggleVoice={handleToggleDrawVoice}
+                  onToggleMute={drawVoice.toggleMute}
+                  onSelectWord={(word) =>
+                    drawRoomService.selectWord(drawRoom.code, drawRoom, myId, word)
+                  }
+                  onCreateStroke={(stroke) => drawRoomService.createStroke(drawRoom.code, stroke)}
+                  onUpdateStrokePoints={(strokeId, points) =>
+                    drawRoomService.updateStrokePoints(drawRoom.code, strokeId, points)
+                  }
+                  onUndoStroke={(strokeId) => drawRoomService.deleteStroke(drawRoom.code, strokeId)}
+                  onClearCanvas={() =>
+                    drawRoom.turn
+                      ? drawRoomService.clearCanvas(drawRoom.code, drawRoom.turn)
+                      : Promise.resolve()
+                  }
+                  onSubmitGuess={(text) => {
+                    const myName =
+                      drawRoom.players[myId]?.name ||
+                      playerName.trim() ||
+                      authUser?.displayName ||
+                      'Player';
+                    return drawRoomService.submitGuess(drawRoom.code, drawRoom, myId, myName, text);
+                  }}
+                  onNextTurn={() => drawRoomService.advanceNextTurn(drawRoom.code, drawRoom)}
+                  onPlayAgain={async () => {
+                    drawChoicesKeyRef.current = '';
+                    drawRevealLockRef.current = '';
+                    drawAdvanceLockRef.current = '';
+                    await drawRoomService.startGame(drawRoom.code, drawRoom);
+                  }}
+                  onBackToLobby={() => drawRoomService.backToLobby(drawRoom.code, drawRoom)}
+                  onLeaveRoom={handleLeaveDrawRoom}
+                />
+              )
             ) : !charadesRoom ? (
               <CharadesMenuScreen
                 lang={lang}
@@ -1712,6 +2222,7 @@ export default function App() {
                 turnConfigured={charadesMedia.turnConfigured}
                 mediaNotice={charadesMedia.mediaNotice}
                 speakingIds={charadesMedia.speakingIds}
+                reactions={charadesReactions}
                 onStartCameraAndMic={async () => {
                   await charadesMedia.startMedia({ wantVideo: true, wantAudio: true });
                 }}
@@ -1743,6 +2254,7 @@ export default function App() {
                 remoteStreams={charadesMedia.remoteStreams}
                 peerStates={charadesMedia.peerStates}
                 speakingIds={charadesMedia.speakingIds}
+                reactions={charadesReactions}
                 cameraOn={charadesMedia.cameraOn}
                 micOn={charadesMedia.micOn}
                 facingMode={charadesMedia.facingMode}
@@ -1819,8 +2331,7 @@ export default function App() {
             ? 'border-t border-amber-200 text-slate-600'
             : 'border-t border-slate-800/60 text-slate-400'
         } ${
-          (activeGame === 'word_battle' && room) ||
-          (activeGame === 'charades' && charadesRoom && charadesRoom.phase !== 'lobby')
+          activeGame === 'charades' && charadesRoom && charadesRoom.phase !== 'lobby'
             ? 'pb-24'
             : ''
         }`}
@@ -1836,19 +2347,6 @@ export default function App() {
           Siddharth Trivedi
         </span>
       </footer>
-
-      {activeGame === 'word_battle' && room && (
-        <VoiceBar
-          lang={lang}
-          micStatus={micStatus}
-          isMuted={isMuted}
-          isSpeaking={Boolean(speakingIds[myId])}
-          onToggleMute={toggleMute}
-          onRetryMic={requestMicrophone}
-          speakingNames={speakingNames}
-          players={playersList}
-        />
-      )}
 
       <FirebaseGuideModal
         open={showFirebaseGuide}

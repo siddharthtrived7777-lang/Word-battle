@@ -9,8 +9,9 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { CharadesPlayer, CharadesRoomState } from '../types/charades';
+import { CharadesPlayer, CharadesReactionEvent, CharadesRoomState } from '../types/charades';
 import { Avatar } from './Avatar';
+import { CharadesReactionOverlay } from './CharadesReactionOverlay';
 import { Language } from '../types/game';
 
 interface CharadesVideoStageProps {
@@ -21,6 +22,7 @@ interface CharadesVideoStageProps {
   remoteStreams: Record<string, MediaStream>;
   peerStates: Record<string, RTCPeerConnectionState>;
   speakingIds: Record<string, boolean>;
+  reactions?: CharadesReactionEvent[];
   cameraOn: boolean;
   facingMode?: 'user' | 'environment';
   layoutMode: 'acting' | 'all';
@@ -96,6 +98,7 @@ export const CharadesVideoStage: React.FC<CharadesVideoStageProps> = ({
   remoteStreams,
   peerStates,
   speakingIds,
+  reactions = [],
   cameraOn,
   facingMode = 'user',
   layoutMode,
@@ -121,6 +124,7 @@ export const CharadesVideoStage: React.FC<CharadesVideoStageProps> = ({
   const audioOnlyRemoteStreams = Object.entries(remoteStreams).filter(
     ([peerId]) => peerId !== myId && !visibleIdSet.has(peerId)
   );
+  const offStageReactions = reactions.filter((rx) => !visibleIdSet.has(rx.senderId));
 
   const count = stagePlayers.length;
   const gridClass =
@@ -232,6 +236,7 @@ export const CharadesVideoStage: React.FC<CharadesVideoStageProps> = ({
             : player.cameraEnabled && hasLiveVideoTrack(stream);
           const isSpeaking = Boolean(speakingIds[player.id]);
           const connState = isMe ? 'connected' : peerStates[player.id] ?? 'connecting';
+          const tileReactions = reactions.filter((rx) => rx.senderId === player.id);
 
           return (
             <div
@@ -313,10 +318,15 @@ export const CharadesVideoStage: React.FC<CharadesVideoStageProps> = ({
                   )}
                 </div>
               </div>
+
+              <CharadesReactionOverlay reactions={tileReactions} variant="tile" />
             </div>
           );
         })}
       </div>
+
+      {/* Reactions from off-stage guessers when stage is in 'acting' mode */}
+      <CharadesReactionOverlay reactions={offStageReactions} variant="corner" />
     </section>
   );
 };

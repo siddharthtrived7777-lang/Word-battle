@@ -31,4 +31,8 @@
 12. Spoofed WebRTC signal sender (`from != request.auth.uid`) or non-member writing `/signals`.
 13. Opponent attempting `get` or `list` on `/card_rooms/ABC12/hands/{otherUid}` or `list` on `/card_rooms/ABC12/deck`.
 14. Non-host player trying to change `selectedGame`, `settings`, or initiate a new round deal in `/card_rooms/ABC12`.
+15. Non-member or spoofed `senderId` creating a gesture reaction or smuggling arbitrary gesture/frame payload into `/charades_rooms/ABC12/reactions/{reactionId}`.
+16. Guesser attempting `get` or `list` on `/draw_rooms/ABC12/secrets/{drawerUid}` to steal the secret word.
+17. Non-drawer attempting to create/update/delete strokes in `/draw_rooms/ABC12/strokes/{strokeId}` or set `turn.revealedWord` while `phase == 'drawing'`.
+18. Non-member attempting to read/write `/draw_rooms/ABC12/messages/{msgId}` or spoof `senderId != request.auth.uid`.
 

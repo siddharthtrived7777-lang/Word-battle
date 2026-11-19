@@ -13,11 +13,6 @@ export const AVATAR_COLORS = [
   '#F97316', // orange
 ];
 
-export const AVATAR_EMOJIS = [
-  '🦊', '🐼', '🦁', '🐸', '🦉', '🐙', '🦄', '🐝',
-  '🐯', '🐨', '🐧', '🦋', '🐢', '🐺', '🦝', '🐬',
-];
-
 export function getInitials(name: string): string {
   const cleaned = name.trim();
   if (!cleaned) return '?';
@@ -65,15 +60,11 @@ export const Avatar: React.FC<AvatarProps> = ({
       <div
         className={`${SIZE_CLASSES[size]} ${ringClass} rounded-2xl flex items-center justify-center font-display font-bold text-slate-950 select-none transition-transform duration-150`}
         style={{
-          backgroundColor: avatar.type === 'emoji' ? '#1E293B' : avatar.color,
+          backgroundColor: avatar.color || AVATAR_COLORS[0],
         }}
         aria-label={name}
       >
-        {avatar.type === 'emoji' ? (
-          <span className="leading-none">{avatar.emoji || '🦊'}</span>
-        ) : (
-          <span className="tracking-tight text-slate-950">{getInitials(name)}</span>
-        )}
+        <span className="tracking-tight text-slate-950">{getInitials(name)}</span>
       </div>
 
       {isHost && (

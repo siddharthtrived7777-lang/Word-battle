@@ -27,6 +27,8 @@ import {
   CharadesPlayer,
   CharadesPrivateMovie,
   CharadesPublicMovieMeta,
+  CharadesReactionEvent,
+  CharadesReactionType,
   CharadesRoomState,
   CharadesTeamId,
 } from '../types/charades';
@@ -37,6 +39,7 @@ export interface CharadesRoomCallbacks {
   onRoomUpdate: (room: CharadesRoomState | null) => void;
   onPrivateMovieUpdate: (movie: CharadesPrivateMovie | null) => void;
   onSignal: (signal: SignalPayload) => void;
+  onReaction?: (reaction: CharadesReactionEvent) => void;
 }
 
 function stripUndefined<T>(value: T): T {
@@ -320,6 +323,43 @@ class CharadesRoomService {
       }
     );
 
+    const reactionsPath = `charades_rooms/${code}/reactions`;
+    const listenerStartedAt = Date.now();
+    const seenReactionIds = new Set<string>();
+    const reactionsQuery = query(
+      collection(firestoreDb, 'charades_rooms', code, 'reactions'),
+      where('recipientIds', 'array-contains', uid)
+    );
+    const unsubReactions = onSnapshot(
+      reactionsQuery,
+      (snapshot) => {
+        for (const change of snapshot.docChanges()) {
+          if (change.type === 'added') {
+            const raw = change.doc.data() as CharadesReactionEvent;
+            if (!raw || !raw.id || seenReactionIds.has(raw.id)) continue;
+            if (typeof raw.timestamp === 'number' && raw.timestamp < listenerStartedAt - 6000) {
+              continue;
+            }
+            seenReactionIds.add(raw.id);
+            if (seenReactionIds.size > 200) {
+              const first = seenReactionIds.values().next().value;
+              if (first) seenReactionIds.delete(first);
+            }
+            this.callbacks?.onReaction?.({
+              id: raw.id,
+              senderId: raw.senderId,
+              senderName: raw.senderName,
+              gesture: raw.gesture,
+              timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : Date.now(),
+            });
+          }
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, reactionsPath);
+      }
+    );
+
     const handlePageHide = () => {
       if (this.activeCode && this.activeUid) {
         updateDoc(doc(firestoreDb, 'charades_rooms', this.activeCode), {
@@ -335,6 +375,7 @@ class CharadesRoomService {
       unsubRoom();
       unsubPrivate();
       unsubSignals();
+      unsubReactions();
       window.removeEventListener('pagehide', handlePageHide);
     });
   }
@@ -604,6 +645,46 @@ class CharadesRoomService {
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, sigPath);
+    }
+  }
+
+  public async sendReaction(
+    code: string,
+    senderName: string,
+    gesture: CharadesReactionType,
+    recipientIds: string[]
+  ): Promise<CharadesReactionEvent | null> {
+    if (!auth.currentUser) return null;
+    const uid = auth.currentUser.uid;
+    const reactionId = `rx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const reactionPath = `charades_rooms/${code}/reactions/${reactionId}`;
+    const safeName = senderName.trim().slice(0, 40) || 'Player';
+    const recipients = Array.from(new Set([uid, ...recipientIds])).slice(0, 10);
+    const timestamp = Date.now();
+
+    try {
+      const ref = doc(firestoreDb, 'charades_rooms', code, 'reactions', reactionId);
+      await setDoc(ref, {
+        id: reactionId,
+        senderId: uid,
+        senderName: safeName,
+        gesture,
+        recipientIds: recipients,
+        timestamp,
+        createdAt: serverTimestamp(),
+      });
+      window.setTimeout(() => {
+        deleteDoc(ref).catch(() => {});
+      }, 8000);
+      return {
+        id: reactionId,
+        senderId: uid,
+        senderName: safeName,
+        gesture,
+        timestamp,
+      };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, reactionPath);
     }
   }
 

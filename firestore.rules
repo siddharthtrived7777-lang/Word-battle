@@ -247,6 +247,29 @@ service cloud.firestore {
         request.auth.uid in getCharadesRoom(roomCode).data.playerIds;
     }
 
+    function isValidCharadesReaction(data, reactionId) {
+      return data.keys().hasAll([
+          'id', 'senderId', 'senderName', 'gesture', 'recipientIds', 'timestamp', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'senderId', 'senderName', 'gesture', 'recipientIds', 'timestamp', 'createdAt'
+        ]) &&
+        data.id == reactionId &&
+        isValidId(data.id) &&
+        isValidId(data.senderId) &&
+        data.senderId == request.auth.uid &&
+        data.senderName is string &&
+        data.senderName.size() >= 1 &&
+        data.senderName.size() <= 40 &&
+        data.gesture in ['heart', 'thumbs_up', 'peace'] &&
+        data.recipientIds is list &&
+        data.recipientIds.size() >= 1 &&
+        data.recipientIds.size() <= 10 &&
+        data.recipientIds[0] is string &&
+        data.timestamp is number &&
+        data.createdAt is timestamp;
+    }
+
     // 4c. Entity Validation Blueprints (Playing Cards Suite)
     function isValidCardRoom(data, roomCode) {
       return data.keys().hasAll([
@@ -321,6 +344,199 @@ service cloud.firestore {
     function isCardRoomMember(roomCode) {
       return exists(/databases/$(database)/documents/card_rooms/$(roomCode)) &&
         request.auth.uid in getCardRoom(roomCode).data.playerIds;
+    }
+
+    // 4d. Entity Validation Blueprints (Draw & Guess)
+    function isValidDrawSettings(settings) {
+      return settings is map &&
+        settings.keys().hasAll(['rounds', 'drawTimeSec', 'wordPack', 'hintsEnabled']) &&
+        settings.keys().hasOnly(['rounds', 'drawTimeSec', 'wordPack', 'hintsEnabled']) &&
+        settings.rounds in [2, 3, 4, 5] &&
+        settings.drawTimeSec in [60, 80, 100] &&
+        settings.wordPack in ['all', 'desi', 'animals', 'food', 'objects', 'adventure'] &&
+        settings.hintsEnabled is bool;
+    }
+
+    function isValidDrawTurn(turn, phase) {
+      return turn is map &&
+        turn.keys().hasAll([
+          'roundNumber', 'turnIndex', 'turnOrder', 'drawerUid', 'turnKey',
+          'packLabel', 'hintMask', 'wordLengths', 'wordHash', 'closeHashes',
+          'startedAt', 'deadlineAt', 'guessedBy', 'drawerPoints',
+          'canvasVersion', 'revealedWord'
+        ]) &&
+        turn.keys().hasOnly([
+          'roundNumber', 'turnIndex', 'turnOrder', 'drawerUid', 'turnKey',
+          'packLabel', 'hintMask', 'wordLengths', 'wordHash', 'closeHashes',
+          'startedAt', 'deadlineAt', 'guessedBy', 'drawerPoints',
+          'canvasVersion', 'revealedWord'
+        ]) &&
+        turn.roundNumber is number &&
+        turn.roundNumber >= 1 &&
+        turn.roundNumber <= 5 &&
+        turn.turnIndex is number &&
+        turn.turnIndex >= 0 &&
+        turn.turnIndex <= 10 &&
+        turn.turnOrder is list &&
+        turn.turnOrder.size() >= 1 &&
+        turn.turnOrder.size() <= 10 &&
+        turn.turnOrder[0] is string &&
+        isValidId(turn.drawerUid) &&
+        turn.turnKey is string &&
+        turn.turnKey.size() >= 1 &&
+        turn.turnKey.size() <= 64 &&
+        turn.packLabel is string &&
+        turn.packLabel.size() >= 1 &&
+        turn.packLabel.size() <= 40 &&
+        turn.hintMask is string &&
+        turn.hintMask.size() <= 120 &&
+        turn.wordLengths is list &&
+        turn.wordLengths.size() <= 10 &&
+        turn.wordHash is string &&
+        turn.wordHash.size() <= 128 &&
+        turn.closeHashes is list &&
+        turn.closeHashes.size() <= 12 &&
+        turn.startedAt is number &&
+        turn.deadlineAt is number &&
+        turn.guessedBy is map &&
+        turn.guessedBy.size() <= 10 &&
+        turn.drawerPoints is number &&
+        turn.drawerPoints >= 0 &&
+        turn.canvasVersion is number &&
+        turn.canvasVersion >= 0 &&
+        (
+          turn.revealedWord == null ||
+          (
+            phase in ['turn_reveal', 'finished'] &&
+            turn.revealedWord is string &&
+            turn.revealedWord.size() >= 1 &&
+            turn.revealedWord.size() <= 60
+          )
+        );
+    }
+
+    function isValidDrawRoom(data, roomCode) {
+      return data.keys().hasAll([
+          'code', 'hostId', 'phase', 'settings', 'playerIds',
+          'players', 'usedWords', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'code', 'hostId', 'phase', 'settings', 'playerIds',
+          'players', 'usedWords', 'turn', 'createdAt', 'updatedAt'
+        ]) &&
+        data.code == roomCode &&
+        isValidRoomCode(data.code) &&
+        isValidId(data.hostId) &&
+        data.phase in ['lobby', 'choosing_word', 'drawing', 'turn_reveal', 'finished'] &&
+        isValidDrawSettings(data.settings) &&
+        data.playerIds is list &&
+        data.playerIds.size() >= 1 &&
+        data.playerIds.size() <= 10 &&
+        data.playerIds[0] is string &&
+        data.players is map &&
+        data.players.size() >= 1 &&
+        data.players.size() <= 10 &&
+        data.usedWords is list &&
+        data.usedWords.size() <= 160 &&
+        (data.usedWords.size() == 0 || data.usedWords[0] is string) &&
+        (!('turn' in data) || data.turn == null || isValidDrawTurn(data.turn, data.phase)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDrawSecret(data, uid) {
+      return data.keys().hasAll(['ownerId', 'turnKey', 'word', 'choices', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'turnKey', 'word', 'choices', 'updatedAt']) &&
+        data.ownerId == uid &&
+        isValidId(data.ownerId) &&
+        data.turnKey is string &&
+        data.turnKey.size() >= 1 &&
+        data.turnKey.size() <= 64 &&
+        data.word is string &&
+        data.word.size() <= 60 &&
+        data.choices is list &&
+        data.choices.size() <= 5 &&
+        (data.choices.size() == 0 || data.choices[0] is string) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDrawStroke(data, strokeId) {
+      return data.keys().hasAll([
+          'id', 'turnKey', 'canvasVersion', 'drawerUid', 'seq',
+          'tool', 'color', 'size', 'points', 'recipientIds', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'turnKey', 'canvasVersion', 'drawerUid', 'seq',
+          'tool', 'color', 'size', 'points', 'recipientIds', 'createdAt'
+        ]) &&
+        data.id == strokeId &&
+        isValidId(data.id) &&
+        data.turnKey is string &&
+        data.turnKey.size() >= 1 &&
+        data.turnKey.size() <= 64 &&
+        data.canvasVersion is number &&
+        data.canvasVersion >= 0 &&
+        isValidId(data.drawerUid) &&
+        data.drawerUid == request.auth.uid &&
+        data.seq is number &&
+        data.seq >= 0 &&
+        data.tool in ['pen', 'eraser', 'fill'] &&
+        data.color is string &&
+        data.color.size() >= 4 &&
+        data.color.size() <= 16 &&
+        data.size is number &&
+        data.size >= 1 &&
+        data.size <= 64 &&
+        data.points is list &&
+        data.points.size() >= 2 &&
+        data.points.size() <= 1600 &&
+        data.points[0] is number &&
+        data.recipientIds is list &&
+        data.recipientIds.size() >= 1 &&
+        data.recipientIds.size() <= 10 &&
+        data.recipientIds[0] is string &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidDrawMessage(data, msgId) {
+      return data.keys().hasAll([
+          'id', 'turnKey', 'senderId', 'senderName', 'kind',
+          'text', 'recipientIds', 'timestamp', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'turnKey', 'senderId', 'senderName', 'kind',
+          'text', 'points', 'recipientIds', 'timestamp', 'createdAt'
+        ]) &&
+        data.id == msgId &&
+        isValidId(data.id) &&
+        data.turnKey is string &&
+        data.turnKey.size() >= 1 &&
+        data.turnKey.size() <= 64 &&
+        isValidId(data.senderId) &&
+        data.senderId == request.auth.uid &&
+        data.senderName is string &&
+        data.senderName.size() >= 1 &&
+        data.senderName.size() <= 40 &&
+        data.kind in ['guess', 'correct', 'system'] &&
+        data.text is string &&
+        data.text.size() >= 1 &&
+        data.text.size() <= 120 &&
+        (!('points' in data) || data.points == null || (data.points is number && data.points >= 0 && data.points <= 500)) &&
+        data.recipientIds is list &&
+        data.recipientIds.size() >= 1 &&
+        data.recipientIds.size() <= 10 &&
+        data.recipientIds[0] is string &&
+        data.timestamp is number &&
+        data.createdAt is timestamp;
+    }
+
+    function getDrawRoom(roomCode) {
+      return get(/databases/$(database)/documents/draw_rooms/$(roomCode));
+    }
+
+    function isDrawRoomMember(roomCode) {
+      return exists(/databases/$(database)/documents/draw_rooms/$(roomCode)) &&
+        request.auth.uid in getDrawRoom(roomCode).data.playerIds;
     }
 
     // 5. Connection Validation Probe
@@ -711,6 +927,32 @@ service cloud.firestore {
           isValidId(signalId) &&
           (existing().to == request.auth.uid || existing().from == request.auth.uid);
       }
+
+      // Ephemeral Hand Gesture Reactions Subcollection (no camera frames or landmarks)
+      match /reactions/{reactionId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(reactionId) &&
+          isCharadesRoomMember(roomCode) &&
+          request.auth.uid in existing().recipientIds;
+
+        allow list: if isVerifiedUser() &&
+          request.auth.uid in resource.data.recipientIds;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(reactionId) &&
+          isValidCharadesReaction(incoming(), reactionId) &&
+          incoming().createdAt == request.time &&
+          isCharadesRoomMember(roomCode);
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(reactionId) &&
+          existing().senderId == request.auth.uid;
+      }
     }
 
     // 9. Playing Cards Collection (UNO, Satyo, Mongoose, Gadha Chor)
@@ -891,6 +1133,208 @@ service cloud.firestore {
           isValidSignal(incoming(), signalId) &&
           incoming().createdAt == request.time &&
           isCardRoomMember(roomCode);
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+      }
+    }
+
+    // 10. Draw & Guess Collection
+    match /draw_rooms/{roomCode} {
+      allow get: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        (
+          resource == null ||
+          request.auth.uid in existing().playerIds ||
+          (existing().phase == 'lobby' && existing().playerIds.size() < 10)
+        );
+
+      // Allows a disconnected player to discover only their own active rooms to rejoin
+      allow list: if isVerifiedUser() &&
+        request.auth.uid in resource.data.playerIds;
+
+      allow create: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidDrawRoom(incoming(), roomCode) &&
+        incoming().hostId == request.auth.uid &&
+        incoming().phase == 'lobby' &&
+        incoming().playerIds.size() == 1 &&
+        incoming().playerIds[0] == request.auth.uid &&
+        incoming().players.keys().hasOnly([request.auth.uid]) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        isValidDrawRoom(incoming(), roomCode) &&
+        incoming().code == existing().code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: New player joining an open lobby adds only self
+          (
+            existing().phase == 'lobby' &&
+            !(request.auth.uid in existing().playerIds) &&
+            existing().playerIds.size() < 10 &&
+            incoming().playerIds.size() == existing().playerIds.size() + 1 &&
+            incoming().playerIds.hasAll(existing().playerIds) &&
+            request.auth.uid in incoming().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'playerIds', 'players', 'updatedAt'
+            ]) &&
+            incoming().players.keys().hasAll(existing().players.keys()) &&
+            incoming().players.diff(existing().players).affectedKeys().hasOnly([request.auth.uid])
+          ) ||
+          // Action 2: Host manages room settings, starting game, advancing turns, play again, and host transfer
+          (
+            existing().hostId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'hostId', 'phase', 'settings', 'playerIds', 'players',
+              'usedWords', 'turn', 'updatedAt'
+            ])
+          ) ||
+          // Action 3: Active drawer picks word, publishes hint mask, clears canvas version, or reveals turn
+          (
+            existing().turn != null &&
+            existing().turn.drawerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'phase', 'turn', 'usedWords', 'updatedAt'
+            ]) &&
+            incoming().phase in ['choosing_word', 'drawing', 'turn_reveal']
+          ) ||
+          // Action 4: Room member submits correct guess, updates own presence/mute, leaves room, or claims host if host left
+          (
+            request.auth.uid in existing().playerIds &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'playerIds', 'players', 'turn', 'phase', 'hostId', 'updatedAt'
+            ]) &&
+            !(existing().phase in ['lobby', 'finished'] && incoming().phase != existing().phase) &&
+            (
+              incoming().hostId == existing().hostId ||
+              (!(existing().hostId in incoming().playerIds) && incoming().hostId == request.auth.uid)
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidRoomCode(roomCode) &&
+        (
+          existing().hostId == request.auth.uid ||
+          (existing().playerIds.size() <= 1 && request.auth.uid in existing().playerIds)
+        );
+
+      // Drawer-Private Secret Word — NEVER readable by guessers or outsiders
+      match /secrets/{uid} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid &&
+          isDrawRoomMember(roomCode);
+
+        allow list: if false;
+
+        allow create, update: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid &&
+          isValidDrawSecret(incoming(), uid) &&
+          incoming().updatedAt == request.time &&
+          isDrawRoomMember(roomCode);
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(uid) &&
+          request.auth.uid == uid;
+      }
+
+      // Live Drawing Canvas Strokes Subcollection
+      match /strokes/{strokeId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(strokeId) &&
+          isDrawRoomMember(roomCode);
+
+        allow list: if isVerifiedUser() &&
+          request.auth.uid in resource.data.recipientIds;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(strokeId) &&
+          isValidDrawStroke(incoming(), strokeId) &&
+          incoming().createdAt == request.time &&
+          isDrawRoomMember(roomCode) &&
+          getDrawRoom(roomCode).data.turn != null &&
+          getDrawRoom(roomCode).data.turn.drawerUid == request.auth.uid;
+
+        allow update: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(strokeId) &&
+          isValidDrawStroke(incoming(), strokeId) &&
+          incoming().id == existing().id &&
+          incoming().drawerUid == existing().drawerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['points']) &&
+          existing().drawerUid == request.auth.uid &&
+          isDrawRoomMember(roomCode);
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(strokeId) &&
+          isDrawRoomMember(roomCode) &&
+          (
+            existing().drawerUid == request.auth.uid ||
+            getDrawRoom(roomCode).data.hostId == request.auth.uid
+          );
+      }
+
+      // Live Guess Chat & Celebration Messages Subcollection
+      match /messages/{messageId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(messageId) &&
+          isDrawRoomMember(roomCode);
+
+        allow list: if isVerifiedUser() &&
+          request.auth.uid in resource.data.recipientIds;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(messageId) &&
+          isValidDrawMessage(incoming(), messageId) &&
+          incoming().createdAt == request.time &&
+          isDrawRoomMember(roomCode);
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(messageId) &&
+          (
+            existing().senderId == request.auth.uid ||
+            (isDrawRoomMember(roomCode) && getDrawRoom(roomCode).data.hostId == request.auth.uid)
+          );
+      }
+
+      // Draw & Guess Live Voice WebRTC Signaling Subcollection
+      match /signals/{signalId} {
+        allow get: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isDrawRoomMember(roomCode) &&
+          (existing().to == request.auth.uid || existing().from == request.auth.uid);
+
+        allow list: if isVerifiedUser() &&
+          resource.data.to == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isValidRoomCode(roomCode) &&
+          isValidId(signalId) &&
+          isValidSignal(incoming(), signalId) &&
+          incoming().createdAt == request.time &&
+          isDrawRoomMember(roomCode);
 
         allow update: if false;
 
